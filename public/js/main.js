@@ -1,0 +1,969 @@
+// Screens, networking, and the game loop.
+(() => {
+  const physics = MR.Shared.physics;
+  const socket = io();
+  const $ = sel => document.querySelector(sel);
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
+  };
+
+  const SEND_MS = 50;
+  const INTERP_MS = 110; // render other players this far in the past for smoothness
+
+  const S = {
+    screen: 'home',
+    room: null,
+    me: { x: 0, y: 0, face: 1, walk: 0, moving: false },
+    others: new Map(), // id -> { snaps: [{t,x,y}], face, walk, moving, x, y }
+    lastSent: { x: 0, y: 0, t: 0 },
+    countdownEnd: 0,
+    goUntil: 0,
+    lanUrl: null,
+    tasks: [],         // my tasks: { type, stationId, x, y, area, done, lockedUntil }
+    mg: null,          // open mini-game: { type, cleanup }
+    taskListOpen: false,
+    barrels: [],
+    my: freshMy(),     // my pickup + effects; times are local performance.now() deadlines
+    busy: false,       // waiting for the server to answer a USE / item tap
+  };
+
+  function freshMy() {
+    return { pickup: null, slowUntil: 0, fogUntil: 0, immuneUntil: 0, keyUntil: 0, keyTrips: 0, shield: false, scramble: false, inHatch: null };
+  }
+
+  const TASKS = MR.Shared.tasks;
+  const PICKUPS = MR.Shared.pickups;
+  const MAP = MR.Shared.map;
+  const typeInfo = new Map(TASKS.types.map(t => [t.id, t]));
+  const itemInfo = new Map(PICKUPS.items.map(i => [i.id, i]));
+  const hatchInfo = new Map(MAP.hatches.map(h => [h.id, h]));
+  const areaName = (x, y) => (MAP.areas.find(a => x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h) || {}).name || '';
+  const STATUS_ICONS = { anchor: '⚓', slime: '🐙', parrot: '🦜', fog: '🌫️', coin: '🛡️', key: '🗝️', immune: '⏳' };
+  const statusText = list => (list || []).map(s => STATUS_ICONS[s]).join(' ');
+
+  // ---------- screens ----------
+  function showScreen(name) {
+    if (S.screen === name) return;
+    S.screen = name;
+    document.querySelectorAll('.screen').forEach(el => el.classList.toggle('active', el.id === name));
+    if (name === 'game') {
+      resizeCanvas();
+      MR.Sfx.startAmbient();
+    } else {
+      MR.Input.reset();
+      MR.Sfx.stopAmbient();
+    }
+  }
+
+  let toastTimer = null;
+  function toast(msg, ms = 2500) {
+    const el = $('#toast');
+    el.textContent = msg;
+    el.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('hidden'), ms);
+  }
+
+  // ---------- home ----------
+  const nameInput = $('#nameInput');
+  const codeInput = $('#codeInput');
+  nameInput.value = store.get('mr-name') || '';
+  const urlRoom = new URLSearchParams(location.search).get('room');
+  if (urlRoom) codeInput.value = urlRoom.toUpperCase().slice(0, 4);
+
+  function myName() {
+    const n = nameInput.value.trim().slice(0, 12);
+    store.set('mr-name', n);
+    return n;
+  }
+
+  function setHomeError(msg) { $('#homeError').textContent = msg || ''; }
+
+  $('#createBtn').addEventListener('click', () => {
+    setHomeError('');
+    socket.emit('createRoom', { name: myName() }, res => {
+      if (!res.ok) setHomeError(res.error);
+    });
+  });
+
+  function join() {
+    setHomeError('');
+    const code = codeInput.value.trim().toUpperCase();
+    if (code.length !== 4) return setHomeError('Enter the 4-letter room code.');
+    socket.emit('joinRoom', { code, name: myName() }, res => {
+      if (!res.ok) setHomeError(res.error);
+    });
+  }
+  $('#joinBtn').addEventListener('click', join);
+  codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') join(); });
+  codeInput.addEventListener('input', () => {
+    codeInput.value = codeInput.value.toUpperCase().replace(/[^A-Z]/g, '');
+  });
+
+  // ---------- lobby ----------
+  function renderLobby() {
+    const room = S.room;
+    const isHost = room.hostId === socket.id;
+    $('#roomCode').textContent = room.code;
+    $('#crewCount').textContent = `(${room.players.length}/6)`;
+
+    const list = $('#playerList');
+    list.replaceChildren(...room.players.map(p => {
+      const li = document.createElement('li');
+      if (p.id === socket.id) li.className = 'me';
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = p.color;
+      const name = document.createElement('span');
+      name.textContent = p.name;
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = [p.id === room.hostId ? '👑 Captain' : '', p.id === socket.id ? '(you)' : ''].filter(Boolean).join(' ');
+      li.append(dot, name, tag);
+      return li;
+    }));
+
+    const me = room.players.find(p => p.id === socket.id);
+    const taken = new Set(room.players.filter(p => p.id !== socket.id).map(p => p.color));
+    $('#colorGrid').replaceChildren(...room.colors.map(c => {
+      const b = document.createElement('button');
+      b.className = 'swatch' + (me && me.color === c ? ' mine' : '');
+      b.style.background = c;
+      b.disabled = taken.has(c);
+      b.setAttribute('aria-label', 'Pick color ' + c);
+      b.addEventListener('click', () => socket.emit('setColor', c));
+      return b;
+    }));
+
+    $('#startBtn').classList.toggle('hidden', !isHost);
+    $('#waitMsg').classList.toggle('hidden', isHost);
+  }
+
+  $('#startBtn').addEventListener('click', () => {
+    goFullscreen();
+    socket.emit('startGame');
+  });
+
+  $('#leaveBtn').addEventListener('click', leaveRoom);
+
+  function shareLink() {
+    const base = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') && S.lanUrl
+      ? S.lanUrl : location.origin;
+    return `${base}/?room=${S.room.code}`;
+  }
+
+  $('#shareBtn').addEventListener('click', async () => {
+    const link = shareLink();
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Mutiny Rush', text: `Join my crew! Code: ${S.room.code}`, url: link }); return; }
+      catch { /* cancelled or blocked: fall through */ }
+    }
+    try {
+      await navigator.clipboard.writeText(link);
+      $('#shareMsg').textContent = 'Link copied! ' + link;
+    } catch {
+      $('#shareMsg').textContent = link;
+    }
+  });
+
+  fetch('/api/info').then(r => r.json()).then(d => { S.lanUrl = d.lanUrl; }).catch(() => {});
+
+  function leaveRoom() {
+    socket.emit('leaveRoom');
+    S.room = null;
+    showScreen('home');
+  }
+
+  // ---------- settings ----------
+  const settingsEl = $('#settings');
+  document.querySelectorAll('.settings-open').forEach(b => b.addEventListener('click', () => {
+    settingsEl.querySelectorAll('input[data-setting]').forEach(inp => { inp.checked = !!MR.Settings.get(inp.dataset.setting); });
+    settingsEl.classList.remove('hidden');
+  }));
+  $('#settingsClose').addEventListener('click', () => settingsEl.classList.add('hidden'));
+  settingsEl.addEventListener('click', e => { if (e.target === settingsEl) settingsEl.classList.add('hidden'); });
+  settingsEl.querySelectorAll('input[data-setting]').forEach(inp => inp.addEventListener('change', () => {
+    MR.Settings.set(inp.dataset.setting, inp.checked);
+    const playing = S.room && S.room.state !== 'ended';
+    if (inp.dataset.setting === 'sound' && inp.checked) {
+      MR.Sfx.click();
+      if (S.screen === 'game' && playing) MR.Sfx.startAmbient();
+    }
+    if (inp.dataset.setting === 'vibration' && inp.checked) MR.vibrate(60);
+  }));
+
+  // ---------- install as an app ----------
+  let installPrompt = null;
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    installPrompt = e;
+    $('#installBtn').classList.remove('hidden');
+  });
+  $('#installBtn').addEventListener('click', async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice.catch(() => {});
+    installPrompt = null;
+    $('#installBtn').classList.add('hidden');
+  });
+  window.addEventListener('appinstalled', () => $('#installBtn').classList.add('hidden'));
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+
+  // ---------- game screen ----------
+  const canvas = $('#canvas');
+  let dpr = 1;
+  function resizeCanvas() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    canvas.width = Math.round(canvas.clientWidth * dpr);
+    canvas.height = Math.round(canvas.clientHeight * dpr);
+  }
+  window.addEventListener('resize', () => { if (S.screen === 'game') resizeCanvas(); });
+
+  function goFullscreen() {
+    if (!MR.Input.isTouch) return;
+    const el = document.documentElement;
+    if (document.fullscreenElement || !el.requestFullscreen) return;
+    el.requestFullscreen().then(() => {
+      if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+    }).catch(() => {});
+  }
+
+  MR.Input.attach(canvas, goFullscreen);
+
+  async function enterGame(room) {
+    const me = room.players.find(p => p.id === socket.id);
+    Object.assign(S.me, { x: me.x, y: me.y, face: 1, walk: 0, moving: false });
+    S.lastSent = { x: me.x, y: me.y, t: 0 };
+    S.others.clear();
+    for (const p of room.players) {
+      if (p.id !== socket.id) S.others.set(p.id, newOther(p.x, p.y));
+    }
+    S.tasks = [];
+    S.taskListOpen = false;
+    S.barrels = [];
+    S.my = freshMy();
+    S.busy = false;
+    closeMinigame(false);
+    for (const id of ['#menu', '#playersPanel', '#results', '#picker', '#hatchPanel']) $(id).classList.add('hidden');
+    renderTaskList();
+    showScreen('game');
+    if (!MR.Render.isReady()) {
+      // Wait for the pirate font so area names draw correctly (max 1.5s).
+      if (document.fonts) {
+        await Promise.race([document.fonts.load('30px "Pirata One"'), new Promise(r => setTimeout(r, 1500))]).catch(() => {});
+      }
+      MR.Render.buildMap();
+    }
+  }
+
+  function newOther(x, y) {
+    return { snaps: [{ t: performance.now(), x, y }], x, y, face: 1, walk: 0, moving: false };
+  }
+
+  function updateHud() {
+    const room = S.room;
+    $('#menuRoom').textContent = `· room ${room.code}`;
+    $('#lobbyBtn').classList.toggle('hidden', room.hostId !== socket.id);
+    // Red dot on 🏆 when a rival is one task from winning.
+    const close = room.players.some(p => p.id !== socket.id && p.done >= room.taskCount - 1);
+    $('#playersBadge').classList.toggle('hidden', !close);
+    if (!$('#playersPanel').classList.contains('hidden')) renderRankList($('#playersList'));
+    if (!$('#picker').classList.contains('hidden')) renderPicker();
+  }
+
+  // ---------- task list (📋) ----------
+  function renderTaskList() {
+    const done = S.tasks.filter(t => t.done).length;
+    $('#taskCount').textContent = `${done}/${S.tasks.length || TASKS.types.length}`;
+    const list = $('#taskList');
+    list.classList.toggle('hidden', !S.taskListOpen || !S.tasks.length);
+    $('#tasksBtn').setAttribute('aria-expanded', String(S.taskListOpen));
+    const now = performance.now();
+    list.replaceChildren(...S.tasks.map(t => {
+      const info = typeInfo.get(t.type);
+      const li = document.createElement('li');
+      if (t.done) li.className = 'done';
+      const area = document.createElement('span');
+      area.className = 'area';
+      const lockLeft = Math.ceil((t.lockedUntil - now) / 1000);
+      area.textContent = !t.done && lockLeft > 0 ? ` · ⚓ ${lockLeft}s` : ` · ${t.area}`;
+      li.append(`${t.done ? '✔' : info.icon} ${info.name}`, area);
+      return li;
+    }));
+  }
+
+  $('#tasksBtn').addEventListener('click', () => {
+    S.taskListOpen = !S.taskListOpen;
+    renderTaskList();
+  });
+
+  // ---------- players panel (🏆) and results ----------
+  function rankedPlayers() {
+    return S.room.players.slice().sort((a, b) =>
+      (b.id === S.room.winnerId) - (a.id === S.room.winnerId) || b.done - a.done);
+  }
+
+  function renderRankList(ul) {
+    const total = S.room.taskCount;
+    ul.replaceChildren(...rankedPlayers().map((p, i) => {
+      const li = document.createElement('li');
+      if (p.id === socket.id) li.className = 'me';
+      const rank = document.createElement('span');
+      rank.className = 'rank';
+      rank.textContent = `${i + 1}.`;
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = p.color;
+      const name = document.createElement('span');
+      name.className = 'pname';
+      name.textContent = p.id === socket.id ? `${p.name} (you) ` : `${p.name} `;
+      if (S.room.state !== 'ended' && p.status && p.status.length) {
+        const st = document.createElement('span');
+        st.className = 'status';
+        st.textContent = statusText(p.status);
+        name.appendChild(st);
+      }
+      const bar = document.createElement('span');
+      bar.className = 'bar';
+      const fill = document.createElement('i');
+      fill.style.width = `${(p.done / total) * 100}%`;
+      bar.appendChild(fill);
+      const count = document.createElement('span');
+      count.className = 'count';
+      count.textContent = `${p.done}/${total}`;
+      li.append(rank, dot, name, bar, count);
+      return li;
+    }));
+  }
+
+  $('#playersBtn').addEventListener('click', () => {
+    renderRankList($('#playersList'));
+    $('#playersPanel').classList.remove('hidden');
+  });
+  $('#playersClose').addEventListener('click', () => $('#playersPanel').classList.add('hidden'));
+
+  function showResults() {
+    closeMinigame(false);
+    for (const id of ['#menu', '#playersPanel', '#picker', '#hatchPanel']) $(id).classList.add('hidden');
+    const winner = S.room.players.find(p => p.id === S.room.winnerId);
+    $('#winnerText').textContent = winner
+      ? (winner.id === socket.id ? 'You are the new Captain!' : `${winner.name} is the new Captain!`)
+      : 'Game over!';
+    renderRankList($('#resultsList'));
+    const isHost = S.room.hostId === socket.id;
+    $('#againBtn').classList.toggle('hidden', !isHost);
+    $('#againWait').classList.toggle('hidden', isHost);
+    $('#results').classList.remove('hidden');
+    MR.Render.confetti(canvas.clientWidth);
+    MR.vibrate(winner && winner.id === socket.id ? [80, 60, 160] : 60);
+    MR.Sfx.stopAmbient();
+    if (winner && winner.id === socket.id) MR.Sfx.fanfare();
+    else MR.Sfx.splash();
+  }
+
+  $('#againBtn').addEventListener('click', () => socket.emit('backToLobby'));
+  $('#resultsLeave').addEventListener('click', leaveRoom);
+
+  // ---------- USE button: tasks, barrels, hatches ----------
+  const hasKey = (now = performance.now()) => S.my.pickup === 'key' && now < S.my.keyUntil;
+
+  // What USE would do right now, in priority order: hatch > task > barrel.
+  function useAction() {
+    if (!S.room || S.room.state !== 'playing' || S.my.inHatch) return null;
+    const now = performance.now();
+    const dist = o => Math.hypot(o.x - S.me.x, o.y - S.me.y);
+    if (hasKey(now) && S.my.keyTrips > 0) {
+      const h = MAP.hatches.find(hh => dist(hh) <= PICKUPS.HATCH_DIST);
+      if (h) return { kind: 'hatch', id: h.id, icon: '🕳️' };
+    }
+    let best = null, bestD = TASKS.USE_DIST;
+    for (const t of S.tasks) {
+      if (t.done) continue;
+      const d = dist(t);
+      if (d <= bestD) { best = t; bestD = d; }
+    }
+    if (best) {
+      if (best.lockedUntil > now) return { kind: 'locked', task: best, icon: '⚓' };
+      return { kind: 'task', task: best, icon: typeInfo.get(best.type).icon };
+    }
+    if (!S.my.pickup) {
+      const b = S.barrels.find(br => dist(br) <= PICKUPS.GRAB_DIST);
+      if (b) return { kind: 'barrel', id: b.id, icon: '🛢️' };
+    }
+    return null;
+  }
+
+  function useNearby() {
+    const a = useAction();
+    if (!a || S.mg || S.busy) return;
+    if (a.kind === 'locked') {
+      toast(`⚓ Anchored! Free in ${Math.ceil((a.task.lockedUntil - performance.now()) / 1000)}s`);
+      return;
+    }
+    if (a.kind === 'task') {
+      const t = a.task;
+      S.mg = { type: t.type, cleanup: null, pending: true };
+      socket.emit('startTask', t.type, res => {
+        if (!S.mg || S.mg.type !== t.type) return;
+        if (!res.ok) {
+          S.mg = null;
+          toast(res.error);
+          return;
+        }
+        openMinigame(t.type, res.scramble);
+      });
+      return;
+    }
+    S.busy = true;
+    if (a.kind === 'barrel') {
+      socket.emit('grabBarrel', a.id, res => {
+        S.busy = false;
+        if (!res.ok) return toast(res.error);
+        const it = itemInfo.get(res.item);
+        MR.Sfx.whoosh();
+        MR.vibrate(40);
+        toast(`${it.icon} ${it.name}! ${it.desc}`, 3000);
+      });
+    } else if (a.kind === 'hatch') {
+      socket.emit('hatch', { action: 'enter', id: a.id }, res => {
+        S.busy = false;
+        if (!res.ok) toast(res.error);
+      });
+    }
+  }
+
+  function openMinigame(type, scramble) {
+    const info = typeInfo.get(type);
+    const stage = $('#mgStage');
+    stage.replaceChildren();
+    $('#mgTitle').textContent = `${scramble ? '🦜' : info.icon} ${info.name}`;
+    $('#mgHint').textContent = '';
+    $('#mg').classList.remove('hidden');
+    MR.Input.reset();
+    const ctx = {
+      stage,
+      scramble: !!scramble,
+      hint: text => { $('#mgHint').textContent = (scramble ? '🦜 Scrambled! ' : '') + text; },
+      done: () => finishMinigame(type),
+    };
+    S.mg = { type, cleanup: MR.Minigames[type](ctx), pending: false };
+  }
+
+  function finishMinigame(type) {
+    if (!S.mg || S.mg.type !== type) return;
+    socket.emit('completeTask', type, res => {
+      if (!res.ok) toast(res.error);
+    });
+    closeMinigame(false);
+  }
+
+  function closeMinigame(notifyServer) {
+    if (!S.mg) return;
+    if (S.mg.cleanup) S.mg.cleanup();
+    S.mg = null;
+    $('#mg').classList.add('hidden');
+    $('#mgStage').replaceChildren();
+    if (notifyServer) socket.emit('cancelTask');
+  }
+
+  $('#useBtn').addEventListener('click', useNearby);
+  $('#mgClose').addEventListener('click', () => closeMinigame(true));
+  window.addEventListener('keydown', e => {
+    if (S.screen !== 'game' || e.target.tagName === 'INPUT') return;
+    if (e.key === 'e' || e.key === 'E') useNearby();
+    if (e.key === 'q' || e.key === 'Q') usePickupBtn();
+    if (e.key === 'Escape') {
+      closeMinigame(true);
+      $('#picker').classList.add('hidden');
+    }
+  });
+
+  // ---------- pickup slot + target picker ----------
+  function usePickupBtn() {
+    const it = S.my.pickup && itemInfo.get(S.my.pickup);
+    if (!it || S.busy || S.mg || S.my.inHatch || !S.room || S.room.state !== 'playing') return;
+    if (it.target === 'passive') {
+      const left = Math.ceil((S.my.keyUntil - performance.now()) / 1000);
+      toast(`🗝️ Walk onto a glowing hatch and tap USE. ${left}s, ${S.my.keyTrips} trip${S.my.keyTrips === 1 ? '' : 's'} left.`, 3000);
+      return;
+    }
+    if (it.target === 'player') {
+      renderPicker();
+      $('#picker').classList.remove('hidden');
+      return;
+    }
+    sendPickup(null);
+  }
+
+  function sendPickup(targetId) {
+    S.busy = true;
+    socket.emit('usePickup', targetId, res => {
+      S.busy = false;
+      if (!res.ok) toast(res.error);
+    });
+  }
+
+  function renderPicker() {
+    const it = S.my.pickup && itemInfo.get(S.my.pickup);
+    if (!it || it.target !== 'player') {
+      $('#picker').classList.add('hidden');
+      return;
+    }
+    $('#pickerTitle').textContent = `${it.icon} ${it.name}: pick a rival`;
+    $('#pickerDesc').textContent = it.desc;
+    const rivals = S.room.players.filter(p => p.id !== socket.id);
+    const list = $('#pickerList');
+    if (!rivals.length) {
+      list.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'No rivals on board!' }));
+      return;
+    }
+    list.replaceChildren(...rivals.map(p => {
+      const why = p.blocked && p.blocked[it.id];
+      const b = document.createElement('button');
+      b.className = 'target';
+      b.disabled = !!why;
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = p.color;
+      const name = document.createElement('span');
+      name.textContent = `${p.name} `;
+      const st = document.createElement('span');
+      st.className = 'status';
+      st.textContent = statusText(p.status);
+      name.appendChild(st);
+      const right = document.createElement('span');
+      right.className = 'why';
+      right.textContent = why || `${p.done}/${S.room.taskCount}`;
+      b.append(dot, name, right);
+      b.addEventListener('click', () => {
+        $('#picker').classList.add('hidden');
+        sendPickup(p.id);
+      });
+      return b;
+    }));
+  }
+
+  $('#pickupBtn').addEventListener('click', usePickupBtn);
+  $('#pickerClose').addEventListener('click', () => $('#picker').classList.add('hidden'));
+
+  let lastPickupKey = '';
+  function updatePickupBtn(now) {
+    const btn = $('#pickupBtn');
+    const it = S.my.pickup && itemInfo.get(S.my.pickup);
+    const keyLeft = it && it.id === 'key' ? Math.max(0, S.my.keyUntil - now) : 0;
+    btn.style.setProperty('--ring', it && it.id === 'key' ? (keyLeft / 30000).toFixed(3) : 0);
+    const key = `${it ? it.id : ''}|${S.my.keyTrips}|${S.room.state}|${!!S.my.inHatch}`;
+    if (key === lastPickupKey) return;
+    lastPickupKey = key;
+    btn.className = 'pickup-btn' + (!it ? ' empty' : it.target === 'passive' ? ' passive' : it.target === 'self' ? ' self' : '');
+    btn.classList.toggle('hidden', S.room.state === 'ended' || !!S.my.inHatch);
+    $('#pickupIcon').textContent = it ? it.icon : '';
+    btn.setAttribute('aria-label', it ? `Use ${it.name}` : 'No item');
+    $('#pickupTrips').classList.toggle('hidden', !it || it.id !== 'key');
+    $('#pickupTrips').textContent = S.my.keyTrips;
+    if (!$('#picker').classList.contains('hidden')) renderPicker();
+  }
+
+  // ---------- inside a hatch ----------
+  let hatchShownFor = null;
+  function updateHatchPanel(now) {
+    const id = S.my.inHatch;
+    const panel = $('#hatchPanel');
+    if (!id) {
+      if (hatchShownFor) panel.classList.add('hidden');
+      hatchShownFor = null;
+      return;
+    }
+    const left = Math.max(0, Math.ceil((S.my.hatchEnteredAt + 5000 - now) / 1000));
+    const trips = S.my.keyTrips;
+    $('#hatchTimer').textContent = `· ${left}s · 🗝️ ${trips} trip${trips === 1 ? '' : 's'} left`;
+    const key = `${id}|${S.my.keyTrips}`;
+    if (hatchShownFor === key) return;
+    hatchShownFor = key;
+    const here = hatchInfo.get(id);
+    $('#hatchName').textContent = `${areaName(here.x, here.y)} hatch`;
+    $('#hatchDest').replaceChildren(...hatchDests(id).map(h => {
+      const b = document.createElement('button');
+      b.className = 'btn btn-use';
+      b.textContent = `→ ${areaName(h.x, h.y)}`;
+      const near = tasksNear(h);
+      if (near.length) {
+        const n = document.createElement('span');
+        n.className = 'near';
+        n.textContent = `near ${near.map(t => typeInfo.get(t.type).icon).join(' ')}`;
+        b.appendChild(n);
+      }
+      b.disabled = S.my.keyTrips <= 0;
+      b.addEventListener('click', () => travelTo(h.id));
+      return b;
+    }));
+    panel.classList.remove('hidden');
+  }
+
+  const NEAR_DIST = 450; // a task this close to a hatch counts as "near"
+  const hatchDests = id => {
+    const here = hatchInfo.get(id);
+    return MAP.hatches.filter(h => h.net === here.net && h.id !== id);
+  };
+  const tasksNear = h => S.tasks.filter(t => !t.done && Math.hypot(t.x - h.x, t.y - h.y) <= NEAR_DIST);
+
+  function travelTo(hatchId) {
+    if (S.busy || S.my.keyTrips <= 0) return;
+    S.busy = true;
+    MR.Sfx.tone(220, 0.4, 'sine', 0.12);
+    socket.emit('hatch', { action: 'travel', id: hatchId }, res => {
+      S.busy = false;
+      if (!res.ok) toast(res.error);
+    });
+  }
+
+  // Ship map inside the hatch panel: redrawn every frame for the glow animation.
+  let hatchView = null;
+  function drawHatchMap(now) {
+    const here = hatchInfo.get(S.my.inHatch);
+    const meInfo = S.room.players.find(p => p.id === socket.id);
+    hatchView = MR.Render.drawMinimap($('#hatchMap'), {
+      dpr,
+      time: now / 1000,
+      here,
+      color: meInfo && meInfo.color,
+      dests: S.my.keyTrips > 0 ? hatchDests(here.id).map(h => ({ hatch: h, label: areaName(h.x, h.y) })) : [],
+      tasks: S.tasks.filter(t => !t.done).map(t => ({ x: t.x, y: t.y, icon: typeInfo.get(t.type).icon, locked: t.lockedUntil > now })),
+    });
+  }
+
+  $('#hatchMap').addEventListener('pointerdown', e => {
+    if (!hatchView || !S.my.inHatch) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const px = e.clientX - r.left, py = e.clientY - r.top;
+    let best = null, bestD = 40; // tap radius in screen pixels
+    for (const h of hatchDests(S.my.inHatch)) {
+      const d = Math.hypot(h.x * hatchView.s + hatchView.ox - px, h.y * hatchView.s + hatchView.oy - py);
+      if (d < bestD) { best = h; bestD = d; }
+    }
+    if (best) travelTo(best.id);
+  });
+
+  $('#hatchExit').addEventListener('click', () => {
+    if (S.busy) return;
+    S.busy = true;
+    socket.emit('hatch', { action: 'exit' }, res => {
+      S.busy = false;
+      if (!res.ok) toast(res.error);
+    });
+  });
+
+  $('#menuBtn').addEventListener('click', () => $('#menu').classList.remove('hidden'));
+  $('#resumeBtn').addEventListener('click', () => $('#menu').classList.add('hidden'));
+  $('#lobbyBtn').addEventListener('click', () => socket.emit('backToLobby'));
+  $('#quitBtn').addEventListener('click', leaveRoom);
+
+  // ---------- network ----------
+  socket.on('room', room => {
+    const prev = S.room;
+    S.room = room;
+    const inGame = room.state !== 'lobby';
+    if (inGame && (!prev || prev.state === 'lobby')) enterGame(room);
+    if (!inGame) {
+      closeMinigame(false);
+      showScreen('lobby');
+      renderLobby();
+      return;
+    }
+    // Drop pirates who left mid-game.
+    const ids = new Set(room.players.map(p => p.id));
+    for (const id of S.others.keys()) if (!ids.has(id)) S.others.delete(id);
+    updateHud();
+    if (room.state === 'ended' && prev && prev.state !== 'ended') showResults();
+    else if (room.state === 'ended') {
+      // Someone left or the host changed while on the results screen.
+      renderRankList($('#resultsList'));
+      const isHost = room.hostId === socket.id;
+      $('#againBtn').classList.toggle('hidden', !isHost);
+      $('#againWait').classList.toggle('hidden', isHost);
+    }
+  });
+
+  socket.on('tasks', list => {
+    const before = new Map(S.tasks.map(t => [t.type, t.done]));
+    const now = performance.now();
+    const tasks = list.map(t => ({ ...t, lockedUntil: t.lockedMs ? now + t.lockedMs : 0 }));
+    S.tasks = tasks;
+    for (const t of tasks) {
+      if (t.done && before.get(t.type) === false) {
+        MR.Render.burst(t.x, t.y - 20);
+        MR.Sfx.good();
+        MR.vibrate(40);
+        const left = tasks.filter(tk => !tk.done).length;
+        if (left) toast(`✔ ${typeInfo.get(t.type).name} done! ${left} to go.`, 1800);
+      }
+    }
+    renderTaskList();
+  });
+
+  socket.on('me', m => {
+    const now = performance.now();
+    const wasIn = S.my.inHatch;
+    S.my = {
+      pickup: m.pickup,
+      slowUntil: now + m.slowMs,
+      fogUntil: now + m.fogMs,
+      immuneUntil: now + m.immuneMs,
+      keyUntil: now + m.keyMs,
+      keyTrips: m.keyTrips,
+      shield: m.shield,
+      scramble: m.scramble,
+      inHatch: m.inHatch,
+      hatchEnteredAt: m.inHatch && m.inHatch === wasIn ? S.my.hatchEnteredAt : now,
+    };
+    if (m.inHatch && m.inHatch !== wasIn) {
+      // Entering or moving through the tunnels
+      MR.Input.reset();
+      $('#picker').classList.add('hidden');
+      MR.Sfx.creak();
+    }
+  });
+
+  socket.on('barrels', list => { S.barrels = list; });
+
+  socket.on('interrupt', () => {
+    if (S.mg) {
+      closeMinigame(false);
+      toast('You got knocked out of your task! Try it again.');
+    }
+  });
+
+  socket.on('notice', ({ text }) => toast(text, 2500));
+
+  const nameOf = id => {
+    const p = S.room && S.room.players.find(pl => pl.id === id);
+    return p ? p.name : 'Someone';
+  };
+
+  function ouch() {
+    const game = $('#game');
+    game.classList.remove('shake-screen');
+    void game.offsetWidth;
+    game.classList.add('shake-screen');
+    MR.vibrate([100, 50, 100]);
+    MR.Sfx.bad();
+  }
+
+  const HIT_MSG = {
+    anchor: by => `⚓ ${by} anchored one of your tasks!`,
+    slime: by => `🐙 ${by} slimed you! Half speed for 8s.`,
+    parrot: by => `🦜 ${by} sent a parrot! Your next task is scrambled.`,
+    wave: by => `🌊 ${by}'s Big Wave washed away one of your tasks!`,
+  };
+
+  socket.on('fx', fx => {
+    if (fx.kind === 'puff') {
+      MR.Render.puff(fx.x, fx.y);
+      if (Math.hypot(fx.x - S.me.x, fx.y - S.me.y) < 600) MR.Sfx.creak();
+      return;
+    }
+    if (fx.kind !== 'sabotage') return;
+    const it = itemInfo.get(fx.item);
+    const me = socket.id;
+    if (fx.item === 'coin') {
+      if (fx.by === me) toast('🛡️ Lucky Coin ready! It blocks the next sabotage.');
+      else toast(`🛡️ ${nameOf(fx.by)} is carrying a Lucky Coin`, 1800);
+      return;
+    }
+    if (fx.item === 'fog') {
+      if (fx.by === me) toast('🌫️ You rolled in the fog on everyone!');
+      else if (S.my.fogUntil > performance.now()) {
+        toast(`🌫️ ${nameOf(fx.by)} rolled in the fog!`);
+        ouch();
+      }
+      return;
+    }
+    if (fx.target === me) {
+      if (fx.blocked) toast(`🛡️ Your Lucky Coin blocked ${nameOf(fx.by)}'s ${it.icon}!`);
+      else {
+        toast(HIT_MSG[fx.item](nameOf(fx.by)), 3000);
+        ouch();
+      }
+    } else if (fx.by === me) {
+      toast(fx.blocked
+        ? `🛡️ ${nameOf(fx.target)}'s Lucky Coin blocked your ${it.icon}!`
+        : `${it.icon} Got ${nameOf(fx.target)}!`);
+    } else {
+      toast(`${nameOf(fx.by)} ${it.icon} ${nameOf(fx.target)}${fx.blocked ? ' (blocked 🛡️)' : ''}`, 1800);
+    }
+  });
+
+  socket.on('countdown', ({ ms }) => {
+    S.countdownEnd = performance.now() + ms;
+  });
+
+  socket.on('state', ({ p }) => {
+    const now = performance.now();
+    for (const [id, x, y, hidden] of p) {
+      if (id === socket.id) continue;
+      let o = S.others.get(id);
+      if (!o) S.others.set(id, (o = newOther(x, y)));
+      // Popping out of a hatch: appear there instead of sliding across the map.
+      if (o.hidden && !hidden) o.snaps = [];
+      o.hidden = !!hidden;
+      o.snaps.push({ t: now, x, y });
+      if (o.snaps.length > 12) o.snaps.shift();
+    }
+  });
+
+  socket.on('correct', ({ x, y }) => {
+    S.me.x = x;
+    S.me.y = y;
+    S.lastSent = { x, y, t: performance.now() };
+  });
+
+  socket.on('disconnect', () => {
+    if (S.room) toast('Lost connection to the server.');
+    S.room = null;
+    showScreen('home');
+  });
+
+  // ---------- loop ----------
+  function updateMe(dt, now) {
+    const me = S.me;
+    if (!S.room || S.room.state !== 'playing' || S.mg || S.my.inHatch || !$('#menu').classList.contains('hidden')) {
+      me.moving = false;
+      return;
+    }
+    const v = MR.Input.vector();
+    if (v.x || v.y) {
+      const speedMul = now < S.my.slowUntil ? 0.5 : 1;
+      const res = physics.move(me.x, me.y, v.x, v.y, dt, speedMul);
+      me.moving = Math.hypot(res.x - me.x, res.y - me.y) > 0.3;
+      me.x = res.x;
+      me.y = res.y;
+      if (Math.abs(v.x) > 0.1) me.face = v.x > 0 ? 1 : -1;
+      if (me.moving) {
+        me.walk += dt * 12;
+        // Creaky footstep on each step of the waddle
+        const step = Math.floor(me.walk / Math.PI);
+        if (step !== S.lastStep) {
+          S.lastStep = step;
+          MR.Sfx.step();
+        }
+      }
+    } else {
+      me.moving = false;
+    }
+    const changed = me.x !== S.lastSent.x || me.y !== S.lastSent.y;
+    if (changed && now - S.lastSent.t >= SEND_MS) {
+      socket.emit('move', { x: me.x, y: me.y });
+      S.lastSent = { x: me.x, y: me.y, t: now };
+    }
+  }
+
+  function updateOthers(dt, now) {
+    const rt = now - INTERP_MS;
+    for (const o of S.others.values()) {
+      const s = o.snaps;
+      let x = s[s.length - 1].x, y = s[s.length - 1].y;
+      for (let i = s.length - 1; i > 0; i--) {
+        if (s[i - 1].t <= rt) {
+          const a = s[i - 1], b = s[i];
+          const k = Math.min(1, Math.max(0, (rt - a.t) / (b.t - a.t || 1)));
+          x = a.x + (b.x - a.x) * k;
+          y = a.y + (b.y - a.y) * k;
+          break;
+        }
+      }
+      const dx = x - o.x, dist = Math.hypot(dx, y - o.y);
+      o.moving = dist > 0.5;
+      if (Math.abs(dx) > 0.5) o.face = dx > 0 ? 1 : -1;
+      if (o.moving) o.walk += dt * 12;
+      o.x = x;
+      o.y = y;
+    }
+  }
+
+  function updateCountdown(now) {
+    const el = $('#countdown');
+    if (!S.room || S.room.state === 'lobby') return el.classList.add('hidden');
+    const left = S.countdownEnd - now;
+    const shown = left > 0 ? Math.ceil(left / 1000) : (now < S.goUntil ? 0 : -1);
+    if (shown !== S.lastBeep && shown >= 0) MR.Sfx.beep(shown === 0);
+    S.lastBeep = shown;
+    if (left > 0) {
+      el.textContent = shown;
+      el.classList.remove('hidden');
+      S.goUntil = S.countdownEnd + 900;
+    } else if (now < S.goUntil) {
+      el.textContent = 'Set sail!';
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    if (S.screen === 'game' && S.room) {
+      updateMe(dt, now);
+      updateOthers(dt, now);
+      updateCountdown(now);
+
+      const byId = new Map(S.room.players.map(p => [p.id, p]));
+      const players = [];
+      const meInfo = byId.get(socket.id);
+      if (meInfo && !S.my.inHatch) {
+        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, isMe: true });
+      }
+      for (const [id, o] of S.others) {
+        const info = byId.get(id);
+        if (info && !o.hidden) {
+          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status });
+        }
+      }
+      const playing = S.room.state === 'playing';
+      const open = S.tasks.filter(t => !t.done).map(t => {
+        const lockedLeft = Math.ceil((t.lockedUntil - now) / 1000);
+        return { ...t, icon: typeInfo.get(t.type).icon, locked: lockedLeft > 0, lockedLeft };
+      });
+      MR.Render.draw(canvas, {
+        dpr, dt, me: S.me, players, time: now / 1000,
+        sway: MR.Settings.get('sway'),
+        tasks: S.room.state === 'ended' ? [] : open,
+        barrels: playing ? S.barrels : [],
+        showHatches: playing && hasKey(now),
+        inHatch: playing ? S.my.inHatch : null,
+        fog: playing && now < S.my.fogUntil,
+        showArrows: playing && !S.my.inHatch,
+        showJoystick: playing && !S.mg && !S.my.inHatch,
+      });
+      updateUseButton();
+      updatePickupBtn(now);
+      updateHatchPanel(now);
+      if (S.my.inHatch && playing) drawHatchMap(now);
+      // Keep anchor countdowns in the task list ticking.
+      if (S.taskListOpen && now - lastListRefresh > 500 && S.tasks.some(t => t.lockedUntil > now - 1000)) {
+        lastListRefresh = now;
+        renderTaskList();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  let lastListRefresh = 0;
+  let lastUseKey = '';
+  function updateUseButton() {
+    const a = S.mg ? null : useAction();
+    const ready = !!a && a.kind !== 'locked';
+    const key = `${a ? a.kind + a.icon : ''}|${S.room.state}|${!!S.my.inHatch}`;
+    if (key === lastUseKey) return;
+    lastUseKey = key;
+    $('#useBtn').classList.toggle('ready', ready);
+    $('#useIcon').textContent = a ? a.icon : '✋';
+    $('#useBtn').classList.toggle('hidden', S.room.state === 'ended' || !!S.my.inHatch);
+  }
+  requestAnimationFrame(frame);
+})();

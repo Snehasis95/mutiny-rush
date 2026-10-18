@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#14202e">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mutiny Rush">
+  <title>Mutiny Rush</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Pirata+One&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Home -->
+  <section id="home" class="screen active">
+    <div class="panel">
+      <h1 class="title">Mutiny Rush</h1>
+      <p class="tagline">Finish yer tasks first. Sabotage the rest.</p>
+      <label class="field">
+        <span>Pirate name</span>
+        <input id="nameInput" maxlength="12" autocomplete="off" placeholder="Pirate">
+      </label>
+      <button id="createBtn" class="btn btn-go">Create Room</button>
+      <div class="divider"><span>or join a crew</span></div>
+      <div class="join-row">
+        <input id="codeInput" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <button id="joinBtn" class="btn btn-use">Join</button>
+      </div>
+      <p id="homeError" class="error" role="alert"></p>
+      <div class="home-extras">
+        <button class="btn btn-small settings-open">⚙ Settings</button>
+        <button id="installBtn" class="btn btn-small hidden">📲 Install app</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Lobby -->
+  <section id="lobby" class="screen">
+    <div class="panel lobby-panel">
+      <div class="lobby-head">
+        <div>
+          <span class="label">Room code</span>
+          <div id="roomCode" class="code">----</div>
+        </div>
+        <div class="lobby-head-btns">
+          <button class="btn btn-small settings-open" aria-label="Settings">⚙</button>
+          <button id="shareBtn" class="btn btn-small">Share link</button>
+        </div>
+      </div>
+      <p id="shareMsg" class="hint"></p>
+      <div class="lobby-cols">
+        <div>
+          <h2>Crew <span id="crewCount" class="muted"></span></h2>
+          <ul id="playerList" class="player-list"></ul>
+        </div>
+        <div>
+          <h2>Your color</h2>
+          <div id="colorGrid" class="color-grid"></div>
+        </div>
+      </div>
+      <div class="lobby-actions">
+        <button id="leaveBtn" class="btn btn-ghost">Leave</button>
+        <button id="startBtn" class="btn btn-go">Set Sail!</button>
+        <p id="waitMsg" class="hint">Waiting for the captain to start…</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Game -->
+  <section id="game" class="screen">
+    <canvas id="canvas"></canvas>
+    <div class="hud">
+      <div class="hud-left">
+        <button id="tasksBtn" class="hud-btn" aria-expanded="false">📋 <span id="taskCount">0/6</span></button>
+        <ul id="taskList" class="task-list"></ul>
+      </div>
+      <div class="hud-right">
+        <button id="playersBtn" class="btn-icon" aria-label="Players">🏆<span id="playersBadge" class="badge hidden"></span></button>
+        <button id="menuBtn" class="btn-icon" aria-label="Menu">☰</button>
+      </div>
+    </div>
+
+    <button id="useBtn" class="use-btn" aria-label="Use">
+      <span id="useIcon" class="use-icon">✋</span>
+      <span>USE</span>
+    </button>
+
+    <button id="pickupBtn" class="pickup-btn empty" aria-label="Use item">
+      <span id="pickupIcon" class="pickup-icon"></span>
+      <span id="pickupTrips" class="pickup-trips hidden"></span>
+    </button>
+
+    <div id="countdown" class="countdown hidden"></div>
+
+    <!-- Target picker -->
+    <div id="picker" class="overlay hidden">
+      <div class="panel players-panel">
+        <div class="panel-head">
+          <h2 id="pickerTitle">Use on…</h2>
+          <button id="pickerClose" class="btn-icon dark" aria-label="Cancel">✕</button>
+        </div>
+        <p id="pickerDesc" class="hint picker-desc"></p>
+        <div id="pickerList" class="picker-list"></div>
+      </div>
+    </div>
+
+    <!-- Inside a smuggler's hatch -->
+    <div id="hatchPanel" class="hatch-panel hidden">
+      <div class="hatch-title">🕳️ <span id="hatchName"></span> <span id="hatchTimer" class="muted-light"></span></div>
+      <div class="hatch-body">
+        <div class="hatch-map-wrap"><canvas id="hatchMap" aria-label="Ship map: tap a glowing hatch to travel"></canvas></div>
+        <div class="hatch-side">
+          <p class="hatch-tip">Tap a glowing hatch to travel</p>
+          <div id="hatchDest" class="hatch-dest"></div>
+          <button id="hatchExit" class="btn btn-go">Climb out here</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Players panel -->
+    <div id="playersPanel" class="overlay hidden">
+      <div class="panel players-panel">
+        <div class="panel-head">
+          <h2>Players</h2>
+          <button id="playersClose" class="btn-icon dark" aria-label="Close">✕</button>
+        </div>
+        <ul id="playersList" class="rank-list"></ul>
+      </div>
+    </div>
+
+    <!-- Mini-game -->
+    <div id="mg" class="mg hidden">
+      <div class="mg-box">
+        <div class="mg-head">
+          <span id="mgTitle" class="mg-title"></span>
+          <span id="mgHint" class="mg-hint"></span>
+          <button id="mgClose" class="btn-icon dark" aria-label="Close">✕</button>
+        </div>
+        <div id="mgStage" class="mg-stage"></div>
+      </div>
+    </div>
+
+    <!-- Results -->
+    <div id="results" class="overlay results hidden">
+      <div class="panel results-panel">
+        <div class="results-flag">🏴‍☠️</div>
+        <h2 id="winnerText" class="winner"></h2>
+        <ul id="resultsList" class="rank-list"></ul>
+        <div class="results-actions">
+          <button id="resultsLeave" class="btn btn-ghost">Leave</button>
+          <button id="againBtn" class="btn btn-go">Play again</button>
+          <p id="againWait" class="hint">Waiting for the captain…</p>
+        </div>
+      </div>
+    </div>
+
+    <div id="menu" class="overlay hidden">
+      <div class="panel menu-panel">
+        <h2>Menu <span id="menuRoom" class="muted"></span></h2>
+        <button id="resumeBtn" class="btn btn-go">Resume</button>
+        <button class="btn btn-small settings-open">⚙ Settings</button>
+        <button id="lobbyBtn" class="btn btn-use">Back to lobby (everyone)</button>
+        <button id="quitBtn" class="btn btn-red">Leave game</button>
+      </div>
+    </div>
+    <div id="rotate" class="rotate">
+      <div class="rotate-icon">📱</div>
+      <p>Turn your phone sideways to play</p>
+    </div>
+  </section>
+
+  <!-- Settings (reachable from home, lobby and the in-game menu) -->
+  <div id="settings" class="overlay settings-overlay hidden">
+    <div class="panel settings-panel">
+      <div class="panel-head">
+        <h2>⚙ Settings</h2>
+        <button id="settingsClose" class="btn-icon dark" aria-label="Close">✕</button>
+      </div>
+      <label class="toggle"><span>🔊 Sound</span><input type="checkbox" data-setting="sound"><i></i></label>
+      <label class="toggle"><span>📳 Vibration</span><input type="checkbox" data-setting="vibration"><i></i></label>
+      <label class="toggle"><span>🌊 Ship sway</span><input type="checkbox" data-setting="sway"><i></i></label>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/shared/map.js"></script>
+  <script src="/shared/physics.js"></script>
+  <script src="/shared/tasks.js"></script>
+  <script src="/shared/pickups.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/touch.js"></script>
+  <script src="js/minigames.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
