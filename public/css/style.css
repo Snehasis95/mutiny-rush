@@ -603,3 +603,25 @@ input:focus { border-color: var(--wood); }
   #optionsPanel .panel-head .btn-icon { width: 38px; height: 38px; }
   #optionsPanel .btn-go { padding: 8px; font-size: 18px; }
 }
+
+/* ---------- Ship events ---------- */
+.toggle-pair { display: grid; grid-template-columns: 1fr 1fr; column-gap: 18px; border-bottom: 2px solid var(--parch-edge); }
+.toggle-pair .toggle { border-bottom: 0; }
+.event-banner {
+  position: absolute; left: 50%; top: calc(64px + var(--safe-t)); transform: translateX(-50%);
+  z-index: 3; display: flex; align-items: center; gap: 10px;
+  padding: 8px 16px; border-radius: 14px; pointer-events: none;
+  background: rgba(20, 32, 46, .85); color: #fff; font-weight: 700;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35); white-space: nowrap;
+}
+.event-banner.warning {
+  background: var(--red); border: 3px solid #fff; font-size: 22px; padding: 10px 20px;
+  animation: event-pulse .5s ease-in-out infinite alternate;
+}
+.event-icon { font-size: 26px; line-height: 1; }
+.event-time { font-weight: 600; opacity: .85; font-variant-numeric: tabular-nums; }
+@keyframes event-pulse { from { transform: translateX(-50%) scale(1); } to { transform: translateX(-50%) scale(1.08); } }
+@media (max-height: 430px) {
+  .event-banner { top: calc(58px + var(--safe-t)); font-size: 15px; }
+  .event-banner.warning { font-size: 18px; }
+}

@@ -110,6 +110,13 @@
 
     <div id="countdown" class="countdown hidden"></div>
 
+    <!-- Ship event banner: big warning, then a small timer while it lasts -->
+    <div id="eventBanner" class="event-banner hidden" role="status" aria-live="assertive">
+      <span id="eventIcon" class="event-icon"></span>
+      <span id="eventText" class="event-text"></span>
+      <span id="eventTime" class="event-time"></span>
+    </div>
+
     <!-- Target picker -->
     <div id="picker" class="overlay hidden">
       <div class="panel players-panel">
@@ -206,7 +213,10 @@
         <h2>⚙️ Game options</h2>
         <button id="optionsClose" class="btn-icon dark" aria-label="Close">✕</button>
       </div>
-      <label class="toggle"><span>🎯 Arrows to tasks</span><input type="checkbox" data-option="taskArrows"><i></i></label>
+      <div class="toggle-pair">
+        <label class="toggle"><span>🎯 Arrows</span><input type="checkbox" data-option="taskArrows"><i></i></label>
+        <label class="toggle"><span>🌊 Ship events</span><input type="checkbox" data-option="events"><i></i></label>
+      </div>
       <div class="toggle stepper-row">
         <span>📋 Tasks per player</span>
         <div class="stepper">
@@ -266,6 +276,7 @@
   <script src="/shared/physics.js"></script>
   <script src="/shared/tasks.js"></script>
   <script src="/shared/pickups.js"></script>
+  <script src="/shared/events.js"></script>
   <script src="js/settings.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/touch.js"></script>

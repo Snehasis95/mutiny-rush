@@ -48,6 +48,8 @@
     barrels: [],
     my: freshMy(),     // my pickup + effects; times are local performance.now() deadlines
     busy: false,
+    event: null,       // current ship event: { id, phase, until, data }
+    blockers: [],      // Kraken tentacles currently blocking doorways
     stormSeed: Math.random() * 6.28, // starting wind direction for ⛈️ Storm
     lastInterruptAt: -1e9,       // waiting for the server to answer a USE / item tap
   };
@@ -58,6 +60,8 @@
 
   const TASKS = MR.Shared.tasks;
   const PICKUPS = MR.Shared.pickups;
+  const EVENTS = MR.Shared.events;
+  const eventInfo = new Map(EVENTS.types.map(t => [t.id, t]));
   const MAP = MR.Shared.map;
   const typeInfo = new Map(TASKS.types.map(t => [t.id, t]));
   const itemInfo = new Map(PICKUPS.items.map(i => [i.id, i]));
@@ -185,7 +189,7 @@
     const o = room.options;
     const botsHere = room.players.filter(p => p.isBot).length; // real number (bots give up seats to people)
     const botText = botsHere ? `🤖 ${botsHere} ${BOT_LEVELS[o.botLevel]} bot${botsHere === 1 ? '' : 's'}` : '🤖 No bots';
-    $('#optionsSummary').textContent = `🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 📋 ${o.taskCount} tasks · ${botText}`;
+    $('#optionsSummary').textContent = `🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 🌊 Events ${o.events ? 'on' : 'off'} · 📋 ${o.taskCount} tasks · ${botText}`;
     $('#optionsNote').textContent = isHost ? '' : 'Set by the Captain';
     $('#optionsBtn').classList.toggle('hidden', !isHost);
     renderOptionsPanel();
@@ -353,6 +357,8 @@
     S.tasks = [];
     S.taskListOpen = false;
     S.barrels = [];
+    S.event = null;
+    S.blockers = [];
     S.my = freshMy();
     S.busy = false;
     closeMinigame(false);
@@ -485,6 +491,7 @@
       dpr,
       time: now / 1000,
       players,
+      blockers: S.blockers,
       tasks: S.room.state === 'ended' ? [] : S.tasks.filter(t => !t.done).map(t => ({
         x: t.x, y: t.y, icon: typeInfo.get(t.type).icon, locked: t.lockedUntil > now,
       })),
@@ -780,6 +787,7 @@
       time: now / 1000,
       here,
       color: meInfo && meInfo.color,
+      blockers: S.blockers,
       dests: S.my.keyTrips > 0 ? hatchDests(here.id).map(h => ({ hatch: h, label: areaName(h.x, h.y) })) : [],
       tasks: S.tasks.filter(t => !t.done).map(t => ({ x: t.x, y: t.y, icon: typeInfo.get(t.type).icon, locked: t.lockedUntil > now })),
     });
@@ -886,6 +894,51 @@
   });
 
   socket.on('barrels', list => { S.barrels = list; });
+
+  // ---------- ship events ----------
+  socket.on('event', e => {
+    if (e.phase === 'end') {
+      S.event = null;
+      S.blockers = [];
+      return;
+    }
+    const now = performance.now();
+    S.event = { id: e.id, phase: e.phase, until: now + e.ms, data: e.data || {} };
+    S.blockers = e.phase === 'active' && e.id === 'kraken' ? e.data.rects : [];
+    if (e.phase === 'warning') {
+      MR.Sfx.horn();
+      MR.vibrate([120, 80, 120]);
+      return;
+    }
+    if (e.id === 'kraken') MR.Sfx.roar();
+    if (e.id === 'wave') {
+      MR.Sfx.splash();
+      if (S.screen === 'game') ouch();
+    }
+    if (e.id === 'eclipse') MR.Sfx.drone();
+  });
+
+  let lastBanner = '';
+  function updateEventBanner(now) {
+    const banner = $('#eventBanner');
+    const ev = S.event;
+    if (!ev || !S.room || S.room.state !== 'playing') {
+      if (lastBanner) banner.classList.add('hidden');
+      lastBanner = '';
+      return;
+    }
+    const info = eventInfo.get(ev.id);
+    const left = Math.max(0, Math.ceil((ev.until - now) / 1000));
+    const warn = ev.phase === 'warning';
+    const key = `${ev.id}|${ev.phase}|${left}`;
+    if (key === lastBanner) return;
+    lastBanner = key;
+    banner.classList.remove('hidden');
+    banner.classList.toggle('warning', warn);
+    $('#eventIcon').textContent = warn ? '⚠️' : info.icon;
+    $('#eventText').textContent = warn ? info.warning : info.desc;
+    $('#eventTime').textContent = `${left}s`;
+  }
 
   socket.on('interrupt', () => {
     S.lastInterruptAt = performance.now();
@@ -1050,6 +1103,11 @@
     if (now < S.my.rumUntil) v = { x: -v.x, y: -v.y }; // 🍺 reversed controls
     const speedMul = PICKUPS.speedMul(now < S.my.slowUntil, now < S.my.boostUntil);
     let mx = v.x * speedMul, my = v.y * speedMul;
+    if (S.event && S.event.id === 'wave' && S.event.phase === 'active') {
+      // 🌊 The rogue wave pushes everyone one way
+      mx += S.event.data.dir.x * EVENTS.WAVE_PUSH;
+      my += S.event.data.dir.y * EVENTS.WAVE_PUSH;
+    }
     if (now < S.my.stormUntil) {
       // ⛈️ Gusts push you around; the wind direction swings slowly.
       const a = (now / 1000) * 0.9 + S.stormSeed;
@@ -1057,7 +1115,7 @@
       my += Math.sin(a) * PICKUPS.STORM_DRIFT;
     }
     if (mx || my) {
-      const res = physics.move(me.x, me.y, mx, my, dt);
+      const res = physics.move(me.x, me.y, mx, my, dt, 1, S.blockers);
       me.moving = Math.hypot(res.x - me.x, res.y - me.y) > 0.3;
       me.x = res.x;
       me.y = res.y;
@@ -1158,12 +1216,14 @@
         inHatch: playing ? S.my.inHatch : null,
         fog: playing && now < S.my.fogUntil,
         storm: playing && now < S.my.stormUntil,
+        shipEvent: playing ? S.event : null,
         showArrows: playing && !S.my.inHatch && S.room.options.taskArrows,
         showJoystick: playing && !S.mg && !S.my.inHatch,
       });
       updateUseButton();
       updatePickupBtn(now);
       updateHatchPanel(now);
+      updateEventBanner(now);
       if (S.my.inHatch && playing) drawHatchMap(now);
       if (!mapPanel.classList.contains('hidden')) drawShipMap(now, players);
       updateMapBtn(playing && now < S.my.fogUntil);

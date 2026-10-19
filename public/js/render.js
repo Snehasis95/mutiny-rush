@@ -719,6 +719,135 @@ MR.Render = (() => {
     }
   }
 
+  // 🐙 Kraken: during the warning the doorways flash red; then tentacles plug them.
+  function drawKraken(g, rects, warning, time) {
+    for (const r of rects) {
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      const vertical = r.h > r.w;
+      if (warning) {
+        const a = 0.35 + 0.35 * Math.abs(Math.sin(time * 8));
+        g.save();
+        g.fillStyle = `rgba(214,69,65,${a * 0.5})`;
+        g.strokeStyle = `rgba(214,69,65,${a + 0.3})`;
+        g.lineWidth = 5;
+        g.setLineDash([12, 8]);
+        g.fillRect(r.x, r.y, r.w, r.h);
+        g.strokeRect(r.x, r.y, r.w, r.h);
+        g.setLineDash([]);
+        g.font = '34px sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.fillText('⚠️', cx, cy);
+        g.restore();
+        continue;
+      }
+      drawOctopus(g, cx, cy, vertical ? r.h : r.w, vertical, time);
+    }
+  }
+
+  // 🐙 An octopus sitting in a doorway: 8 wriggling arms spread along the gap, round head, big eyes.
+  function drawOctopus(g, cx, cy, long, vertical, time) {
+    const seed = (cx + cy) * 0.013;
+    const axis = vertical ? Math.PI / 2 : 0; // the doorway's long direction
+    const armLen = long * 0.5 + 8;
+    g.save();
+    g.lineCap = 'round';
+
+    // Shadow on the deck
+    g.fillStyle = 'rgba(0,0,0,.25)';
+    g.beginPath(); g.ellipse(cx + 4, cy + 10, 40, 24, 0, 0, Math.PI * 2); g.fill();
+
+    // Arms: four reach each way along the doorway, curling at the tips
+    for (let i = 0; i < 8; i++) {
+      const side = i < 4 ? 0 : Math.PI;
+      const fan = ((i % 4) - 1.5) * 0.42;
+      const curlDir = i % 2 ? 1 : -1;
+      const pts = [{ x: cx, y: cy }];
+      let x = cx, y = cy;
+      const steps = 12;
+      for (let j = 1; j <= steps; j++) {
+        const t = j / steps;
+        const ang = axis + side + fan
+          + Math.sin(time * 3 + i * 1.3 + seed + t * 4) * 0.35 * t
+          + curlDir * t * t * 1.3;
+        x += Math.cos(ang) * (armLen / steps);
+        y += Math.sin(ang) * (armLen / steps);
+        pts.push({ x, y });
+      }
+      // Tapered arm: outline, then body colour, thinner towards the tip
+      for (let j = 1; j < pts.length; j++) {
+        const t = j / pts.length;
+        const w = 15 * (1 - t * 0.75);
+        for (const [col, extra] of [['#3b1747', 4], ['#9b59b6', 0]]) {
+          g.strokeStyle = col;
+          g.lineWidth = w + extra;
+          g.beginPath(); g.moveTo(pts[j - 1].x, pts[j - 1].y); g.lineTo(pts[j].x, pts[j].y); g.stroke();
+        }
+      }
+      // Suckers
+      g.fillStyle = '#f5c6dc';
+      for (let j = 3; j < pts.length - 1; j += 2) {
+        g.beginPath(); g.arc(pts[j].x, pts[j].y, 2.6 * (1 - j / pts.length * 0.5), 0, Math.PI * 2); g.fill();
+      }
+    }
+
+    // Head (mantle), a little taller than wide, with a gentle breathing bob
+    const bob = Math.sin(time * 2 + seed) * 2;
+    const hx = cx, hy = cy - 8 + bob;
+    const grad = g.createRadialGradient(hx - 10, hy - 14, 4, hx, hy, 40);
+    grad.addColorStop(0, '#c39bd3');
+    grad.addColorStop(1, '#8e44ad');
+    g.fillStyle = grad;
+    g.strokeStyle = '#3b1747';
+    g.lineWidth = 4;
+    g.beginPath(); g.ellipse(hx, hy, 30, 35, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+    // Spots
+    g.fillStyle = 'rgba(255,255,255,.22)';
+    for (const [dx, dy, rr] of [[-12, -18, 5], [10, -22, 4], [14, -6, 3], [-4, -28, 3]]) {
+      g.beginPath(); g.arc(hx + dx, hy + dy, rr, 0, Math.PI * 2); g.fill();
+    }
+
+    // Eyes that look around and blink now and then
+    const blink = Math.sin(time * 0.9 + seed * 7) > 0.96;
+    const look = Math.sin(time * 1.3 + seed) * 2.5;
+    for (const ex of [-11, 11]) {
+      const eyX = hx + ex, eyY = hy + 6;
+      if (blink) {
+        g.strokeStyle = '#3b1747';
+        g.lineWidth = 3;
+        g.beginPath(); g.moveTo(eyX - 7, eyY); g.lineTo(eyX + 7, eyY); g.stroke();
+        continue;
+      }
+      g.fillStyle = '#fffbe6';
+      g.strokeStyle = '#3b1747';
+      g.lineWidth = 2;
+      g.beginPath(); g.ellipse(eyX, eyY, 8, 9, 0, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.fillStyle = '#1a1a1a';
+      g.beginPath(); g.ellipse(eyX + look, eyY + 1, 4.5, 2.5, 0, 0, Math.PI * 2); g.fill(); // octopus slit pupil
+    }
+    g.restore();
+  }
+
+  // 🌊 Rogue wave: blue water and foam streaking across the screen (screen space).
+  function drawWave(g, cw, ch, dir, t) {
+    g.fillStyle = 'rgba(40,140,200,.28)';
+    g.fillRect(0, 0, cw, ch);
+    g.strokeStyle = 'rgba(255,255,255,.75)';
+    g.lineWidth = 4;
+    g.lineCap = 'round';
+    const span = dir.x ? cw : ch;
+    for (let i = 0; i < 26; i++) {
+      const lane = ((i * 97) % 100) / 100;
+      const pos = ((t * 900 + i * 137) % (span + 200)) - 100;
+      const len = 40 + (i % 4) * 20;
+      const p = dir.x > 0 || dir.y > 0 ? pos : span - pos;
+      g.beginPath();
+      if (dir.x) { g.moveTo(p, lane * ch); g.lineTo(p - dir.x * len, lane * ch + Math.sin(i) * 6); }
+      else { g.moveTo(lane * cw, p); g.lineTo(lane * cw + Math.sin(i) * 6, p - dir.y * len); }
+      g.stroke();
+    }
+  }
+
   // ⛈️ Dark sky, slanted rain and the odd lightning flash (screen space).
   function drawStorm(g, cw, ch, t) {
     g.fillStyle = 'rgba(15,25,45,.35)';
@@ -802,6 +931,7 @@ MR.Render = (() => {
     if (s.showHatches) for (const h of map.hatches) drawHatch(g, h, s.time, h.id === s.inHatch);
     for (const t of s.tasks) drawStation(g, t, t.icon, s.time);
     for (const b of s.barrels) drawBarrel(g, b, s.time);
+    if (s.shipEvent && s.shipEvent.id === 'kraken') drawKraken(g, s.shipEvent.data.rects, s.shipEvent.phase === 'warning', s.time);
 
     const list = s.players.slice().sort((a, b) => a.y - b.y);
     for (const p of list) drawPirate(g, p, s.time);
@@ -817,6 +947,10 @@ MR.Render = (() => {
       drawDarkness(g, cw, ch, meScreen, 150 * zoom, 'rgba(200,210,220,.97)');
     }
     if (s.storm && !s.inHatch) drawStorm(g, cw, ch, s.time);
+    if (s.shipEvent && s.shipEvent.phase === 'active' && !s.inHatch) {
+      if (s.shipEvent.id === 'eclipse') drawDarkness(g, cw, ch, meScreen, 110 * zoom, 'rgba(4,6,18,.97)');
+      if (s.shipEvent.id === 'wave') drawWave(g, cw, ch, s.shipEvent.data.dir, s.time);
+    }
     if (s.showArrows) {
       const toScreen = (x, y) => ({ x: cw / 2 + (x - cam.x) * zoom, y: ch / 2 + (y - cam.y) * zoom });
       drawEdgeArrows(g, s.tasks, toScreen, cw, ch);
@@ -850,6 +984,15 @@ MR.Render = (() => {
     if (mapCanvas) g.drawImage(mapCanvas, -PAD.l, -PAD.t);
     g.fillStyle = 'rgba(10,6,2,.35)';
     g.fillRect(B.x - 400, B.y - 400, B.w + 800, B.h + 800);
+
+    // Kraken tentacles blocking doorways
+    for (const r of o.blockers || []) {
+      g.fillStyle = '#8e44ad';
+      g.strokeStyle = '#3b1747';
+      g.lineWidth = 3 * k;
+      g.fillRect(r.x, r.y, r.w, r.h);
+      g.strokeRect(r.x, r.y, r.w, r.h);
+    }
 
     // Your unfinished tasks
     g.textAlign = 'center';

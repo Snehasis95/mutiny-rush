@@ -139,6 +139,10 @@ MR.Sfx = (() => {
       hiss(1.6, 160, 50, 0.3, 0.5);
       setTimeout(() => hiss(1.2, 120, 40, 0.22, 0.5), 350);
     },
+    // Ship events
+    horn: () => { tone(196, 0.7, 'sawtooth', 0.1, 185); setTimeout(() => tone(147, 0.9, 'sawtooth', 0.1, 140), 350); },
+    roar: () => { hiss(1.2, 140, 60, 0.3, 0.6); tone(70, 1.0, 'sawtooth', 0.12, 45); },
+    drone: () => tone(110, 1.8, 'sine', 0.12, 70),
     // 🥅 Fishing Net: whoosh + thud
     net: () => { hiss(0.3, 1200, 400, 0.14, 1); setTimeout(() => tone(130, 0.2, 'sine', 0.2, 70), 260); },
     // 🍺 Rum Bottle

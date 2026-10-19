@@ -119,6 +119,26 @@
 
   const spawn = { x: 1200, y: 500, r: 120 };
 
+  // Every doorway and the two areas it joins (vertical = a gap in an up-down wall).
+  const doors = [
+    { x: 600,  y: 175,  vertical: true,  a: 'cabin',   b: 'deck' },
+    { x: 600,  y: 525,  vertical: true,  a: 'maproom', b: 'deck' },
+    { x: 600,  y: 850,  vertical: true,  a: 'galley',  b: 'deck' },
+    { x: 1800, y: 175,  vertical: true,  a: 'nest',    b: 'deck' },
+    { x: 1800, y: 525,  vertical: true,  a: 'armory',  b: 'deck' },
+    { x: 1800, y: 850,  vertical: true,  a: 'cannon',  b: 'deck' },
+    { x: 300,  y: 350,  vertical: false, a: 'cabin',   b: 'maproom' },
+    { x: 300,  y: 700,  vertical: false, a: 'maproom', b: 'galley' },
+    { x: 2100, y: 350,  vertical: false, a: 'nest',    b: 'armory' },
+    { x: 2100, y: 700,  vertical: false, a: 'armory',  b: 'cannon' },
+    { x: 400,  y: 1000, vertical: false, a: 'galley',  b: 'cargo' },
+    { x: 1050, y: 1000, vertical: false, a: 'deck',    b: 'brig' },
+    { x: 1550, y: 1000, vertical: false, a: 'deck',    b: 'vault' },
+    { x: 2100, y: 1000, vertical: false, a: 'cannon',  b: 'vault' },
+    { x: 800,  y: 1200, vertical: true,  a: 'cargo',   b: 'brig' },
+    { x: 1300, y: 1200, vertical: true,  a: 'brig',    b: 'vault' },
+  ];
+
   // Smuggler's hatches (vents). Hatches only connect to others in the same network.
   const hatches = [
     { id: 'h-cabin',   net: 'top',    x: 520,  y: 90 },
@@ -140,5 +160,5 @@
     { x: 500, y: 1300 }, { x: 1050, y: 1250 }, { x: 1650, y: 1300 }, { x: 2200, y: 1120 },
   ];
 
-  return { W, H, walls, areas, props, spawn, hatches, barrelSpots };
+  return { W, H, walls, areas, props, spawn, doors, hatches, barrelSpots };
 });

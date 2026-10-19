@@ -50,8 +50,16 @@ function assign(playerCount, typeIds) {
   }
   combos.sort((a, b) => a.len - b.len);
   const median = combos[Math.floor(combos.length / 2)].len;
-  let fair = combos.filter(c => Math.abs(c.len - median) <= median * FAIR_BAND);
-  if (fair.length < playerCount) fair = combos; // tiny games: just use everything
+  // With few task types there are few combos: widen the band a little at a time
+  // until there's some choice, instead of giving up on fairness.
+  let band = FAIR_BAND, fair = [];
+  const want = Math.min(playerCount, 6, combos.length);
+  while (band <= 0.3) {
+    fair = combos.filter(c => Math.abs(c.len - median) <= median * band);
+    if (fair.length >= want) break;
+    band += 0.02;
+  }
+  if (!fair.length) fair = combos;
 
   // Hand out combos, preferring stations nobody else has yet.
   const used = new Map();

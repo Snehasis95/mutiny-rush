@@ -5,6 +5,7 @@ const map = require('../shared/map');
 const physics = require('../shared/physics');
 const tasksDef = require('../shared/tasks');
 const pickupsDef = require('../shared/pickups');
+const eventsDef = require('../shared/events');
 
 const NAMES = ['Blackbeard', 'Anne Bonny', 'Calico Jack', 'Long John', 'Barbossa', 'Mad Morgan', 'Flint', 'Davy Jones', 'Mary Read', 'Red Rackham'];
 
@@ -70,18 +71,25 @@ function nearestWalkable(x, y) {
 }
 
 // Straight walk between two points without touching anything?
-function clearLine(a, b) {
+function clearLine(a, b, ok = isWalk) {
   const steps = Math.ceil(dist(a, b) / 8);
   for (let i = 1; i <= steps; i++) {
     const x = a.x + ((b.x - a.x) * i) / steps, y = a.y + ((b.y - a.y) * i) / steps;
     const c = cellOf(x, y);
-    if (!isWalk(c.c, c.r)) return false;
+    if (!ok(c.c, c.r)) return false;
   }
   return true;
 }
 
 // A* over the grid (8 directions), then the path is straightened where there's a clear line.
-function findPath(from, to) {
+function findPath(from, to, blockers = []) {
+  const R = physics.PLAYER_R + 4;
+  const blocked = (c, r) => {
+    if (!blockers.length) return false;
+    const x = c * CELL + CELL / 2, y = r * CELL + CELL / 2;
+    return blockers.some(b => x > b.x - R && x < b.x + b.w + R && y > b.y - R && y < b.y + b.h + R);
+  };
+  const ok = (c, r) => isWalk(c, r) && !blocked(c, r);
   const s = nearestWalkable(from.x, from.y), g = nearestWalkable(to.x, to.y);
   if (!s || !g) return null;
   const key = (c, r) => r * COLS + c;
@@ -103,8 +111,8 @@ function findPath(from, to) {
       for (let dc = -1; dc <= 1; dc++) {
         if (!dr && !dc) continue;
         const nc = cur.c + dc, nr = cur.r + dr;
-        if (!isWalk(nc, nr)) continue;
-        if (dr && dc && (!isWalk(cur.c + dc, cur.r) || !isWalk(cur.c, cur.r + dr))) continue; // no corner cutting
+        if (!ok(nc, nr)) continue;
+        if (dr && dc && (!ok(cur.c + dc, cur.r) || !ok(cur.c, cur.r + dr))) continue; // no corner cutting
         const nk = key(nc, nr);
         const ng = gScore.get(cur.k) + (dr && dc ? 1.414 : 1);
         if (ng < (gScore.has(nk) ? gScore.get(nk) : Infinity)) {
@@ -128,7 +136,7 @@ function findPath(from, to) {
   let i = 0, here = { x: from.x, y: from.y };
   while (i < cells.length) {
     let j = cells.length - 1;
-    while (j > i && !clearLine(here, cells[j])) j--;
+    while (j > i && !clearLine(here, cells[j], ok)) j--;
     out.push(cells[j]);
     here = cells[j];
     i = j + 1;
@@ -144,6 +152,11 @@ function brain(p) {
 
 function resetBrain(p) {
   p.brain = null;
+}
+
+// Forget the current route (e.g. tentacles just appeared or went away).
+function resetPath(p) {
+  if (p.brain) p.brain.path = null;
 }
 
 // Where should this bot go next? The nearest open task, or a barrel that's close by.
@@ -239,7 +252,7 @@ function update(room, p, dt, now) {
   }
 
   // Walk along the route.
-  if (!b.path || !b.path.length) b.path = findPath(p, g) || [{ x: g.x, y: g.y }];
+  if (!b.path || !b.path.length) b.path = findPath(p, g, room.blockers) || [{ x: g.x, y: g.y }];
   let wp = b.path[0];
   while (wp && dist(p, wp) < 10 && b.path.length > 1) { b.path.shift(); wp = b.path[0]; }
 
@@ -252,7 +265,12 @@ function update(room, p, dt, now) {
     vx += Math.cos(a) * pickupsDef.STORM_DRIFT;
     vy += Math.sin(a) * pickupsDef.STORM_DRIFT;
   }
-  const res = physics.move(p.x, p.y, vx, vy, dt);
+  const wave = room.waveDir();
+  if (wave) {
+    vx += wave.x * eventsDef.WAVE_PUSH;
+    vy += wave.y * eventsDef.WAVE_PUSH;
+  }
+  const res = physics.move(p.x, p.y, vx, vy, dt, 1, room.blockers);
   p.x = res.x;
   p.y = res.y;
 
@@ -260,7 +278,7 @@ function update(room, p, dt, now) {
   if (now >= b.checkAt) {
     if (b.checkAt && Math.hypot(p.x - b.checkX, p.y - b.checkY) < 15) {
       b.path = null;
-      const n = physics.sweep(p.x, p.y, p.x + rand(-30, 30), p.y + rand(-30, 30));
+      const n = physics.sweep(p.x, p.y, p.x + rand(-30, 30), p.y + rand(-30, 30), room.blockers);
       p.x = n.x;
       p.y = n.y;
     }
@@ -270,4 +288,4 @@ function update(room, p, dt, now) {
   }
 }
 
-module.exports = { NAMES, LEVEL_IDS, update, resetBrain, findPath, walkableCount: () => walkable.reduce((a, v) => a + v, 0) };
+module.exports = { NAMES, LEVEL_IDS, update, resetBrain, resetPath, findPath, walkableCount: () => walkable.reduce((a, v) => a + v, 0) };

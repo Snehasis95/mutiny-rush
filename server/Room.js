@@ -4,6 +4,7 @@ const tasksDef = require('../shared/tasks');
 const pickupsDef = require('../shared/pickups');
 const { assign, pickTypes } = require('./taskAssign');
 const bots = require('./bots');
+const eventsDef = require('../shared/events');
 
 const MAX_PLAYERS = 6;
 const COUNTDOWN_MS = 3000;
@@ -67,8 +68,13 @@ class Room {
     this.nextKeyAt = 0;
     this.lastStatus = '';
     // Options the room creator can change in the lobby
-    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS, botCount: 0, botLevel: 'normal' };
+    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS, botCount: 0, botLevel: 'normal', events: true };
     this.botSeq = 0;
+    // Random ship events
+    this.event = null;      // { id, phase: 'warning' | 'active', startsAt, endsAt, data }
+    this.lastEventId = null;
+    this.nextEventAt = 0;
+    this.blockers = [];     // temporary walls (Kraken tentacles)
   }
 
   humans() {
@@ -186,6 +192,7 @@ class Room {
     this.toPlayer(p, 'barrels', this.barrels);
     this.toPlayer(p, 'correct', { x: p.x, y: p.y });
     if (this.state === 'countdown') this.toPlayer(p, 'countdown', { ms: Math.max(0, this.countdownEndsAt - Date.now()) });
+    if (this.event) this.toPlayer(p, 'event', this.eventPayload(Date.now()));
   }
 
   // Private message to one player (skipped while they're offline).
@@ -205,6 +212,7 @@ class Room {
       taskCount: v => Number.isInteger(v) && v >= tasksDef.MIN_TASKS && v <= tasksDef.MAX_TASKS,
       botCount: v => Number.isInteger(v) && v >= 0 && v <= MAX_PLAYERS - 1,
       botLevel: v => bots.LEVEL_IDS.includes(v),
+      events: v => typeof v === 'boolean',
     };
     if (!valid[key] || !valid[key](value)) return;
     this.options[key] = value;
@@ -260,6 +268,9 @@ class Room {
       for (let i = 0; i < BARRELS_AT_START; i++) this.spawnBarrel();
       this.nextBarrelAt = now + BARREL_EVERY_MS;
       this.nextKeyAt = now + KEY_FIRST_MS;
+      this.event = null;
+      this.blockers = [];
+      this.nextEventAt = now + eventsDef.FIRST_MS;
       this.broadcast();
       this.tickTimer = setInterval(() => this.tick(), TICK_MS);
     }, COUNTDOWN_MS);
@@ -268,6 +279,7 @@ class Room {
   backToLobby(byId) {
     if (byId !== this.hostId || this.state === 'lobby') return;
     this.stopTimers();
+    this.clearEvent();
     this.state = 'lobby';
     this.winnerId = null;
     this.barrels = [];
@@ -281,6 +293,7 @@ class Room {
 
   end(winnerId) {
     this.stopTimers();
+    this.clearEvent();
     this.state = 'ended';
     this.winnerId = winnerId;
     for (const p of this.players.values()) {
@@ -314,6 +327,7 @@ class Room {
           this.toPlayer(p, 'notice', { text: 'Too long in the hatch, you got pushed out!' });
         }
       }
+      this.updateEvent(now);
       for (const p of this.players.values()) {
         if (p.isBot && this.state === 'playing') bots.update(this, p, TICK_MS / 1000, now);
       }
@@ -323,6 +337,111 @@ class Room {
     }
     const p = [...this.players.values()].map(pl => [pl.id, Math.round(pl.x), Math.round(pl.y), pl.inHatch ? 1 : 0]);
     this.io.to(this.code).emit('state', { p });
+  }
+
+  // ---------------- random ship events ----------------
+
+  updateEvent(now) {
+    if (!this.options.events) return;
+    const ev = this.event;
+    if (!ev) {
+      if (now >= this.nextEventAt) this.warnEvent(now);
+    } else if (ev.phase === 'warning' && now >= ev.startsAt) {
+      this.startEvent(now);
+    } else if (ev.phase === 'active' && now >= ev.endsAt) {
+      this.clearEvent();
+      this.nextEventAt = now + eventsDef.GAP_MS[0] + Math.random() * (eventsDef.GAP_MS[1] - eventsDef.GAP_MS[0]);
+    }
+  }
+
+  // Step 1: announce it (3 seconds of warning).
+  warnEvent(now) {
+    const choices = eventsDef.types.filter(t => t.id !== this.lastEventId);
+    const type = pick(choices);
+    const data = {};
+    if (type.id === 'kraken') {
+      data.doors = this.pickKrakenDoors();
+      data.rects = data.doors.map(eventsDef.tentacleRect);
+    }
+    if (type.id === 'wave') {
+      // Sweeps along the length or the width of the ship
+      data.dir = pick([{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }]);
+    }
+    this.event = { id: type.id, phase: 'warning', startsAt: now + eventsDef.WARNING_MS, endsAt: now + eventsDef.WARNING_MS + type.ms, data };
+    this.lastEventId = type.id;
+    this.io.to(this.code).emit('event', this.eventPayload(now));
+  }
+
+  // Step 2: it hits.
+  startEvent(now) {
+    const ev = this.event;
+    ev.phase = 'active';
+    if (ev.id === 'kraken') {
+      this.blockers = ev.data.rects;
+      // Anyone standing in a doorway gets shoved clear of the tentacle.
+      for (const p of this.players.values()) {
+        if (p.inHatch) continue;
+        const r = physics.resolve(p.x, p.y, this.blockers);
+        if (Math.hypot(r.x - p.x, r.y - p.y) > 0.5) {
+          p.x = r.x;
+          p.y = r.y;
+          this.toPlayer(p, 'correct', { x: p.x, y: p.y });
+        }
+        if (p.isBot) bots.resetPath(p);
+      }
+    }
+    if (ev.id === 'wave') {
+      // The wave knocks everyone out of their mini-game.
+      for (const p of this.players.values()) {
+        if (!p.activeTask || p.inHatch) continue;
+        p.activeTask = null;
+        this.toPlayer(p, 'interrupt');
+      }
+    }
+    this.io.to(this.code).emit('event', this.eventPayload(now));
+  }
+
+  clearEvent() {
+    if (!this.event) return;
+    this.event = null;
+    this.blockers = [];
+    for (const p of this.players.values()) if (p.isBot) bots.resetPath(p);
+    this.io.to(this.code).emit('event', { phase: 'end' });
+  }
+
+  waveDir() {
+    const ev = this.event;
+    return ev && ev.id === 'wave' && ev.phase === 'active' ? ev.data.dir : null;
+  }
+
+  eventPayload(now) {
+    const ev = this.event;
+    return {
+      id: ev.id,
+      phase: ev.phase,
+      ms: Math.max(0, (ev.phase === 'warning' ? ev.startsAt : ev.endsAt) - now),
+      data: ev.data,
+    };
+  }
+
+  // Blocks some doorways, but every room keeps a way out and the ship stays connected.
+  pickKrakenDoors() {
+    const doors = map.doors;
+    for (let tries = 0; tries < 100; tries++) {
+      const chosen = doors.slice().sort(() => Math.random() - 0.5).slice(0, eventsDef.KRAKEN_DOORS);
+      const open = doors.filter(d => !chosen.includes(d));
+      const seen = new Set(['deck']);
+      const queue = ['deck'];
+      while (queue.length) {
+        const a = queue.shift();
+        for (const d of open) {
+          const other = d.a === a ? d.b : d.b === a ? d.a : null;
+          if (other && !seen.has(other)) { seen.add(other); queue.push(other); }
+        }
+      }
+      if (seen.size === map.areas.length) return chosen;
+    }
+    return [];
   }
 
   // ---------------- movement ----------------
@@ -335,7 +454,8 @@ class Room {
 
     const now = Date.now();
     // Storm gusts can push you a bit faster than normal, so allow for them too.
-    const speedMul = pickupsDef.speedMul(now < p.slowUntil, now < p.boostUntil) + (now < p.stormUntil ? pickupsDef.STORM_DRIFT : 0);
+    const speedMul = pickupsDef.speedMul(now < p.slowUntil, now < p.boostUntil) + (now < p.stormUntil ? pickupsDef.STORM_DRIFT : 0)
+      + (this.waveDir() ? eventsDef.WAVE_PUSH : 0);
     p.budget = Math.min(BUDGET_CAP * Math.max(1, speedMul), p.budget + (BUDGET_RATE * speedMul * (now - p.lastMoveAt)) / 1000);
     p.lastMoveAt = now;
 
@@ -351,7 +471,7 @@ class Room {
       dx *= p.budget / d;
       dy *= p.budget / d;
     }
-    const res = physics.sweep(p.x, p.y, p.x + dx, p.y + dy);
+    const res = physics.sweep(p.x, p.y, p.x + dx, p.y + dy, this.blockers);
     p.budget -= Math.hypot(res.x - p.x, res.y - p.y);
     p.x = res.x;
     p.y = res.y;
