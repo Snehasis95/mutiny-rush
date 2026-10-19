@@ -223,7 +223,15 @@
           <button id="botCountUp" class="step-btn" aria-label="More bots">+</button>
         </div>
       </div>
-      <p class="hint">Each game picks the tasks at random, and everyone gets the same ones. Bots give up their seat when a friend joins.</p>
+      <div class="toggle stepper-row level-row">
+        <span>🎚️ Bot level</span>
+        <div class="segmented" role="radiogroup" aria-label="Bot difficulty">
+          <button class="seg-btn" data-level="easy" role="radio">Easy</button>
+          <button class="seg-btn" data-level="normal" role="radio">Normal</button>
+          <button class="seg-btn" data-level="hard" role="radio">Hard</button>
+        </div>
+      </div>
+      <p class="hint">Tasks are picked at random (same for everyone). Bots give up their seat when a friend joins.</p>
       <button id="optionsDone" class="btn btn-go">Done</button>
     </div>
   </div>

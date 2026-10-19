@@ -9,6 +9,26 @@ const pickupsDef = require('../shared/pickups');
 const NAMES = ['Blackbeard', 'Anne Bonny', 'Calico Jack', 'Long John', 'Barbossa', 'Mad Morgan', 'Flint', 'Davy Jones', 'Mary Read', 'Red Rackham'];
 
 const rand = (a, b) => a + Math.random() * (b - a);
+
+// How each difficulty plays. Normal is the original bot.
+const LEVELS = {
+  easy: {
+    walk: 0.7,              // share of full walking speed
+    taskExtra: [5000, 9000], // extra ms spent on each mini-game
+    pause: [1000, 2500],    // "thinking" pause after each task
+    barrelReach: 220,       // only detours for barrels this close
+    itemDelay: [4000, 9000],
+    leaderChance: 0.3,      // how often they aim at whoever is winning
+  },
+  normal: {
+    walk: 1, taskExtra: [2500, 6000], pause: [0, 0], barrelReach: 380, itemDelay: [1500, 5000], leaderChance: 0.7,
+  },
+  hard: {
+    walk: 1, taskExtra: [1000, 3000], pause: [0, 0], barrelReach: 520, itemDelay: [600, 2000], leaderChance: 1,
+  },
+};
+const LEVEL_IDS = Object.keys(LEVELS);
+const levelOf = room => LEVELS[room.options.botLevel] || LEVELS.normal;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const typeById = new Map(tasksDef.types.map(t => [t.id, t]));
 const itemById = new Map(pickupsDef.items.map(i => [i.id, i]));
@@ -118,7 +138,7 @@ function findPath(from, to) {
 
 // ---------------- the bot's brain ----------------
 function brain(p) {
-  if (!p.brain) p.brain = { goal: null, path: null, taskUntil: 0, itemAt: 0, checkAt: 0, checkX: 0, checkY: 0, wobble: rand(0, 6) };
+  if (!p.brain) p.brain = { goal: null, path: null, taskUntil: 0, itemAt: 0, restUntil: 0, checkAt: 0, checkX: 0, checkY: 0, wobble: rand(0, 6) };
   return p.brain;
 }
 
@@ -135,7 +155,7 @@ function chooseGoal(room, p, now) {
       .filter(b => b.kind === 'barrel')
       .sort((a, b) => dist(p, a) - dist(p, b))[0];
     const taskD = nearestTask ? dist(p, nearestTask) : Infinity;
-    if (barrel && dist(p, barrel) < 380 && dist(p, barrel) < taskD * 0.9) {
+    if (barrel && dist(p, barrel) < levelOf(room).barrelReach && dist(p, barrel) < taskD * 0.9) {
       return { kind: 'barrel', id: barrel.id, x: barrel.x, y: barrel.y };
     }
   }
@@ -162,18 +182,19 @@ function useItem(room, p, now) {
     .filter(q => q !== p && !room.targetError(q, it.id, now))
     .sort((a, b) => room.doneCount(b) - room.doneCount(a));
   if (!targets.length) return false;
-  const pick = Math.random() < 0.7 ? targets[0] : targets[Math.floor(Math.random() * targets.length)];
+  const pick = Math.random() < levelOf(room).leaderChance ? targets[0] : targets[Math.floor(Math.random() * targets.length)];
   return room.usePickup(p.id, pick.id) === null;
 }
 
 // One server tick for one bot.
 function update(room, p, dt, now) {
   const b = brain(p);
+  const lv = levelOf(room);
   if (p.inHatch) return;
 
   // Items: hang on for a moment, then use them.
   if (p.pickup && p.pickup !== 'key') {
-    if (!b.itemAt) b.itemAt = now + rand(1500, 5000);
+    if (!b.itemAt) b.itemAt = now + rand(...lv.itemDelay);
     if (now >= b.itemAt) b.itemAt = useItem(room, p, now) ? 0 : now + 2000;
   }
 
@@ -184,9 +205,11 @@ function update(room, p, dt, now) {
     if (now >= b.taskUntil) {
       room.completeTask(p.id, p.activeTask.type);
       b.goal = null;
+      b.restUntil = now + rand(...lv.pause);
     }
     return;
   }
+  if (now < b.restUntil) return; // Easy bots stop to think between tasks
 
   if (!b.goal || !goalStillValid(room, p, b.goal, now)) {
     b.goal = chooseGoal(room, p, now);
@@ -202,7 +225,7 @@ function update(room, p, dt, now) {
       if (!res.error) {
         // Bots take a believable amount of time; scrambled tasks take longer.
         const base = typeById.get(g.type).minMs;
-        b.taskUntil = now + base + rand(2500, 6000) + (res.scramble ? 2500 : 0);
+        b.taskUntil = now + base + rand(...lv.taskExtra) + (res.scramble ? 2500 : 0);
       } else {
         b.goal = null;
       }
@@ -220,7 +243,7 @@ function update(room, p, dt, now) {
   let wp = b.path[0];
   while (wp && dist(p, wp) < 10 && b.path.length > 1) { b.path.shift(); wp = b.path[0]; }
 
-  const mul = pickupsDef.speedMul(now < p.slowUntil, now < p.boostUntil);
+  const mul = pickupsDef.speedMul(now < p.slowUntil, now < p.boostUntil) * lv.walk;
   let ang = Math.atan2(wp.y - p.y, wp.x - p.x);
   if (now < p.rumUntil) ang += Math.sin(now / 300 + b.wobble) * 1.3; // 🍺 staggering
   let vx = Math.cos(ang) * mul, vy = Math.sin(ang) * mul;
@@ -247,4 +270,4 @@ function update(room, p, dt, now) {
   }
 }
 
-module.exports = { NAMES, update, resetBrain, findPath, walkableCount: () => walkable.reduce((a, v) => a + v, 0) };
+module.exports = { NAMES, LEVEL_IDS, update, resetBrain, findPath, walkableCount: () => walkable.reduce((a, v) => a + v, 0) };

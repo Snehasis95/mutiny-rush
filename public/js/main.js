@@ -29,6 +29,7 @@
 
   const SEND_MS = 50;
   const MAX_PIRATES = 6; // people + bots in one room
+  const BOT_LEVELS = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
   const INTERP_MS = 110; // render other players this far in the past for smoothness
 
   const S = {
@@ -183,7 +184,8 @@
     // Game options: everyone sees a summary; only the Captain gets the ⚙️ button.
     const o = room.options;
     const botsHere = room.players.filter(p => p.isBot).length; // real number (bots give up seats to people)
-    $('#optionsSummary').textContent = `🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 📋 ${o.taskCount} tasks · 🤖 ${botsHere} bot${botsHere === 1 ? '' : 's'}`;
+    const botText = botsHere ? `🤖 ${botsHere} ${BOT_LEVELS[o.botLevel]} bot${botsHere === 1 ? '' : 's'}` : '🤖 No bots';
+    $('#optionsSummary').textContent = `🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 📋 ${o.taskCount} tasks · ${botText}`;
     $('#optionsNote').textContent = isHost ? '' : 'Set by the Captain';
     $('#optionsBtn').classList.toggle('hidden', !isHost);
     renderOptionsPanel();
@@ -205,6 +207,11 @@
     $('#botCountValue').textContent = botsHere;
     $('#botCountDown').disabled = botsHere <= 0;
     $('#botCountUp').disabled = botsHere >= MAX_PIRATES - humans;
+    optionsPanel.querySelectorAll('.seg-btn').forEach(btn => {
+      const on = btn.dataset.level === o.botLevel;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-checked', String(on));
+    });
   }
 
   $('#optionsBtn').addEventListener('click', () => {
@@ -236,6 +243,7 @@
     if (n !== botsHere) setOption('botCount', n);
   };
   $('#botCountDown').addEventListener('click', () => stepBots(-1));
+  optionsPanel.querySelectorAll('.seg-btn').forEach(btn => btn.addEventListener('click', () => setOption('botLevel', btn.dataset.level)));
   $('#botCountUp').addEventListener('click', () => stepBots(1));
 
   $('#startBtn').addEventListener('click', () => {

@@ -67,7 +67,7 @@ class Room {
     this.nextKeyAt = 0;
     this.lastStatus = '';
     // Options the room creator can change in the lobby
-    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS, botCount: 0 };
+    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS, botCount: 0, botLevel: 'normal' };
     this.botSeq = 0;
   }
 
@@ -204,6 +204,7 @@ class Room {
       taskArrows: v => typeof v === 'boolean',
       taskCount: v => Number.isInteger(v) && v >= tasksDef.MIN_TASKS && v <= tasksDef.MAX_TASKS,
       botCount: v => Number.isInteger(v) && v >= 0 && v <= MAX_PLAYERS - 1,
+      botLevel: v => bots.LEVEL_IDS.includes(v),
     };
     if (!valid[key] || !valid[key](value)) return;
     this.options[key] = value;
