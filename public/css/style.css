@@ -504,4 +504,12 @@ input:focus { border-color: var(--wood); }
   .game-options .toggle { padding: 4px 0; }
   .lobby-actions .btn { padding: 9px 14px; }
 }
+/* ---------- Reconnecting ---------- */
+.reconnect-overlay { position: fixed; z-index: 40; }
+.reconnect-panel { max-width: 360px; text-align: center; display: grid; gap: 8px; }
+.reconnect-panel h2 { margin: 0; font-size: 24px; }
+.reconnect-panel .hint { margin: 0 0 6px; }
+.reconnect-spin { font-size: 44px; line-height: 1; animation: spin 1.4s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .btn-icon.fogged { opacity: .45; filter: grayscale(1); border-style: dashed; }

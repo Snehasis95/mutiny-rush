@@ -1,6 +1,7 @@
 const path = require('path');
 const http = require('http');
 const os = require('os');
+const crypto = require('crypto');
 const express = require('express');
 const { Server } = require('socket.io');
 const Room = require('./Room');
@@ -33,26 +34,52 @@ function cleanName(name) {
   return String(name || '').trim().slice(0, 12) || 'Pirate';
 }
 
+// Players rejoin with a secret token kept in their browser tab.
+const cleanToken = t => (typeof t === 'string' && /^[A-Za-z0-9_-]{16,64}$/.test(t) ? t : null);
+
+function newRoom() {
+  const code = makeCode();
+  const room = new Room(io, code);
+  room.onEmpty = () => rooms.delete(code);
+  rooms.set(code, room);
+  return room;
+}
+
 io.on('connection', socket => {
   let room = null;
+  let pid = null; // this connection's player id inside `room`
+
+  // Only the player's current connection may act for them.
+  const active = () => room && pid && room.players.has(pid) && room.players.get(pid).socketId === socket.id;
+
+  function bind(r, id) {
+    room = r;
+    pid = id;
+    socket.join(r.code);
+    // Sent before any room update, so the page knows which pirate is "me".
+    socket.emit('you', { id, code: r.code });
+  }
 
   function leave() {
-    if (!room) return;
-    socket.leave(room.code);
-    room.removePlayer(socket.id);
-    if (room.isEmpty()) rooms.delete(room.code);
+    if (active()) room.removePlayer(pid);
+    if (room) socket.leave(room.code);
     room = null;
+    pid = null;
+  }
+
+  function enter(r, data) {
+    const token = cleanToken(data && data.token);
+    if (!token) return { ok: false, error: 'Please reload the page and try again.' };
+    leave();
+    const id = crypto.randomBytes(6).toString('hex');
+    bind(r, id);
+    r.addPlayer(id, socket.id, token, cleanName(data && data.name));
+    return { ok: true, code: r.code };
   }
 
   socket.on('createRoom', (data, ack) => {
     if (typeof ack !== 'function') return;
-    leave();
-    const code = makeCode();
-    room = new Room(io, code);
-    rooms.set(code, room);
-    socket.join(code);
-    room.addPlayer(socket.id, cleanName(data && data.name));
-    ack({ ok: true, code });
+    ack(enter(newRoom(), data));
   });
 
   socket.on('joinRoom', (data, ack) => {
@@ -60,56 +87,76 @@ io.on('connection', socket => {
     const code = String((data && data.code) || '').trim().toUpperCase();
     const target = rooms.get(code);
     if (!target) return ack({ ok: false, error: 'No room with that code.' });
+    // Already in this room (e.g. typed the code again after a drop): just reconnect.
+    const known = cleanToken(data && data.token) && target.findByToken(data.token);
+    if (known) return ack(rejoin(target, known));
     const err = target.joinError();
     if (err) return ack({ ok: false, error: err });
-    leave();
-    room = target;
-    socket.join(code);
-    room.addPlayer(socket.id, cleanName(data && data.name));
-    ack({ ok: true, code });
+    ack(enter(target, data));
   });
 
-  socket.on('setColor', color => room && room.setColor(socket.id, color));
-  socket.on('setOption', data => data && room && room.setOption(socket.id, data.key, data.value));
-  socket.on('startGame', () => room && room.start(socket.id));
-  socket.on('backToLobby', () => room && room.backToLobby(socket.id));
-  socket.on('move', data => data && room && room.handleMove(socket.id, data.x, data.y));
+  function rejoin(r, p) {
+    if (room !== r || pid !== p.id) leave();
+    bind(r, p.id);
+    r.reconnectPlayer(p, socket.id);
+    return { ok: true, code: r.code, rejoined: true };
+  }
+
+  // After a dropped connection or a page reload: get back into the same match.
+  socket.on('rejoin', (data, ack) => {
+    if (typeof ack !== 'function') return;
+    const token = cleanToken(data && data.token);
+    const r = rooms.get(String((data && data.code) || '').toUpperCase());
+    const p = token && r && r.findByToken(token);
+    if (!p) return ack({ ok: false, error: 'That game is over or you were away too long.' });
+    ack(rejoin(r, p));
+  });
+
+  socket.on('setColor', color => active() && room.setColor(pid, color));
+  socket.on('setOption', data => data && active() && room.setOption(pid, data.key, data.value));
+  socket.on('startGame', () => active() && room.start(pid));
+  socket.on('backToLobby', () => active() && room.backToLobby(pid));
+  socket.on('move', data => data && active() && room.handleMove(pid, data.x, data.y));
 
   socket.on('startTask', (type, ack) => {
     if (typeof ack !== 'function') return;
-    const res = room ? room.startTask(socket.id, type) : { error: 'Not in a room.' };
+    const res = active() ? room.startTask(pid, type) : { error: 'Not in a room.' };
     ack({ ok: !res.error, ...res });
   });
   socket.on('completeTask', (type, ack) => {
     if (typeof ack !== 'function') return;
-    const error = room ? room.completeTask(socket.id, type) : 'Not in a room.';
+    const error = active() ? room.completeTask(pid, type) : 'Not in a room.';
     ack({ ok: !error, error });
   });
-  socket.on('cancelTask', () => room && room.cancelTask(socket.id));
+  socket.on('cancelTask', () => active() && room.cancelTask(pid));
 
   socket.on('grabBarrel', (barrelId, ack) => {
     if (typeof ack !== 'function') return;
-    const res = room ? room.grabBarrel(socket.id, barrelId) : { error: 'Not in a room.' };
+    const res = active() ? room.grabBarrel(pid, barrelId) : { error: 'Not in a room.' };
     ack({ ok: !res.error, ...res });
   });
   socket.on('usePickup', (targetId, ack) => {
     if (typeof ack !== 'function') return;
-    const error = room ? room.usePickup(socket.id, targetId) : 'Not in a room.';
+    const error = active() ? room.usePickup(pid, targetId) : 'Not in a room.';
     ack({ ok: !error, error });
   });
   socket.on('hatch', (data, ack) => {
     if (typeof ack !== 'function' || !data) return;
     let error = 'Not in a room.';
-    if (room) {
-      if (data.action === 'enter') error = room.enterHatch(socket.id, data.id);
-      else if (data.action === 'travel') error = room.travelHatch(socket.id, data.id);
-      else if (data.action === 'exit') error = room.exitHatch(socket.id);
+    if (active()) {
+      if (data.action === 'enter') error = room.enterHatch(pid, data.id);
+      else if (data.action === 'travel') error = room.travelHatch(pid, data.id);
+      else if (data.action === 'exit') error = room.exitHatch(pid);
       else error = 'Unknown action.';
     }
     ack({ ok: !error, error });
   });
+
+  // Tapping Leave removes you right away; a dropped connection gets a grace period.
   socket.on('leaveRoom', leave);
-  socket.on('disconnect', leave);
+  socket.on('disconnect', () => {
+    if (room && pid) room.disconnectPlayer(pid, socket.id);
+  });
 });
 
 function lanIp() {

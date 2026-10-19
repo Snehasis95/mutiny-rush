@@ -9,12 +9,31 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } },
   };
 
+  // ---------- session: lets this tab rejoin its match after a drop or reload ----------
+  const session = {
+    token() {
+      let t = null;
+      try { t = sessionStorage.getItem('mr-token'); } catch { /* storage unavailable */ }
+      if (!t) {
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        t = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+        try { sessionStorage.setItem('mr-token', t); } catch { /* storage unavailable */ }
+      }
+      return t;
+    },
+    get() { try { return sessionStorage.getItem('mr-room'); } catch { return null; } },
+    set(code) { try { sessionStorage.setItem('mr-room', code); } catch { /* storage unavailable */ } },
+    clear() { try { sessionStorage.removeItem('mr-room'); } catch { /* storage unavailable */ } },
+  };
+
   const SEND_MS = 50;
   const INTERP_MS = 110; // render other players this far in the past for smoothness
 
   const S = {
     screen: 'home',
     room: null,
+    myId: null,        // my player id (stays the same when I reconnect)
     me: { x: 0, y: 0, face: 1, walk: 0, moving: false },
     others: new Map(), // id -> { snaps: [{t,x,y}], face, walk, moving, x, y }
     lastSent: { x: 0, y: 0, t: 0 },
@@ -42,7 +61,7 @@
   const itemInfo = new Map(PICKUPS.items.map(i => [i.id, i]));
   const hatchInfo = new Map(MAP.hatches.map(h => [h.id, h]));
   const areaName = (x, y) => (MAP.areas.find(a => x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h) || {}).name || '';
-  const STATUS_ICONS = { anchor: '⚓', slime: '🐙', parrot: '🦜', fog: '🌫️', storm: '⛈️', rum: '🍺', net: '🥅', wind: '💨', coin: '🛡️', key: '🗝️', immune: '⏳' };
+  const STATUS_ICONS = { offline: '📴', anchor: '⚓', slime: '🐙', parrot: '🦜', fog: '🌫️', storm: '⛈️', rum: '🍺', net: '🥅', wind: '💨', coin: '🛡️', key: '🗝️', immune: '⏳' };
   const statusText = list => (list || []).map(s => STATUS_ICONS[s]).join(' ');
 
   // ---------- screens ----------
@@ -85,7 +104,7 @@
 
   $('#createBtn').addEventListener('click', () => {
     setHomeError('');
-    socket.emit('createRoom', { name: myName() }, res => {
+    socket.emit('createRoom', { name: myName(), token: session.token() }, res => {
       if (!res.ok) setHomeError(res.error);
     });
   });
@@ -94,7 +113,7 @@
     setHomeError('');
     const code = codeInput.value.trim().toUpperCase();
     if (code.length !== 4) return setHomeError('Enter the 4-letter room code.');
-    socket.emit('joinRoom', { code, name: myName() }, res => {
+    socket.emit('joinRoom', { code, name: myName(), token: session.token() }, res => {
       if (!res.ok) setHomeError(res.error);
     });
   }
@@ -107,14 +126,14 @@
   // ---------- lobby ----------
   function renderLobby() {
     const room = S.room;
-    const isHost = room.hostId === socket.id;
+    const isHost = room.hostId === S.myId;
     $('#roomCode').textContent = room.code;
     $('#crewCount').textContent = `(${room.players.length}/6)`;
 
     const list = $('#playerList');
     list.replaceChildren(...room.players.map(p => {
       const li = document.createElement('li');
-      if (p.id === socket.id) li.className = 'me';
+      if (p.id === S.myId) li.className = 'me';
       const dot = document.createElement('span');
       dot.className = 'dot';
       dot.style.background = p.color;
@@ -122,13 +141,13 @@
       name.textContent = p.name;
       const tag = document.createElement('span');
       tag.className = 'tag';
-      tag.textContent = [p.id === room.hostId ? '👑 Captain' : '', p.id === socket.id ? '(you)' : ''].filter(Boolean).join(' ');
+      tag.textContent = [p.connected === false ? '📴 reconnecting' : '', p.id === room.hostId ? '👑 Captain' : '', p.id === S.myId ? '(you)' : ''].filter(Boolean).join(' ');
       li.append(dot, name, tag);
       return li;
     }));
 
-    const me = room.players.find(p => p.id === socket.id);
-    const taken = new Set(room.players.filter(p => p.id !== socket.id).map(p => p.color));
+    const me = room.players.find(p => p.id === S.myId);
+    const taken = new Set(room.players.filter(p => p.id !== S.myId).map(p => p.color));
     $('#colorGrid').replaceChildren(...room.colors.map(c => {
       const b = document.createElement('button');
       b.className = 'swatch' + (me && me.color === c ? ' mine' : '');
@@ -151,7 +170,7 @@
   }
 
   document.querySelectorAll('#lobby input[data-option]').forEach(inp => inp.addEventListener('change', () => {
-    if (!S.room || S.room.hostId !== socket.id) {
+    if (!S.room || S.room.hostId !== S.myId) {
       inp.checked = !!(S.room && S.room.options[inp.dataset.option]);
       return;
     }
@@ -189,7 +208,10 @@
 
   function leaveRoom() {
     socket.emit('leaveRoom');
+    session.clear();
     S.room = null;
+    S.myId = null;
+    $('#reconnect').classList.add('hidden');
     showScreen('home');
   }
 
@@ -252,12 +274,12 @@
   MR.Input.attach(canvas, goFullscreen);
 
   async function enterGame(room) {
-    const me = room.players.find(p => p.id === socket.id);
+    const me = room.players.find(p => p.id === S.myId);
     Object.assign(S.me, { x: me.x, y: me.y, face: 1, walk: 0, moving: false });
     S.lastSent = { x: me.x, y: me.y, t: 0 };
     S.others.clear();
     for (const p of room.players) {
-      if (p.id !== socket.id) S.others.set(p.id, newOther(p.x, p.y));
+      if (p.id !== S.myId) S.others.set(p.id, newOther(p.x, p.y));
     }
     S.tasks = [];
     S.taskListOpen = false;
@@ -284,9 +306,9 @@
   function updateHud() {
     const room = S.room;
     $('#menuRoom').textContent = `· room ${room.code}`;
-    $('#lobbyBtn').classList.toggle('hidden', room.hostId !== socket.id);
+    $('#lobbyBtn').classList.toggle('hidden', room.hostId !== S.myId);
     // Red dot on 🏆 when a rival is one task from winning.
-    const close = room.players.some(p => p.id !== socket.id && p.done >= room.taskCount - 1);
+    const close = room.players.some(p => p.id !== S.myId && p.done >= room.taskCount - 1);
     $('#playersBadge').classList.toggle('hidden', !close);
     if (!$('#playersPanel').classList.contains('hidden')) renderRankList($('#playersList'));
     if (!$('#picker').classList.contains('hidden')) renderPicker();
@@ -328,7 +350,7 @@
     const total = S.room.taskCount;
     ul.replaceChildren(...rankedPlayers().map((p, i) => {
       const li = document.createElement('li');
-      if (p.id === socket.id) li.className = 'me';
+      if (p.id === S.myId) li.className = 'me';
       const rank = document.createElement('span');
       rank.className = 'rank';
       rank.textContent = `${i + 1}.`;
@@ -337,7 +359,7 @@
       dot.style.background = p.color;
       const name = document.createElement('span');
       name.className = 'pname';
-      name.textContent = p.id === socket.id ? `${p.name} (you) ` : `${p.name} `;
+      name.textContent = p.id === S.myId ? `${p.name} (you) ` : `${p.name} `;
       if (S.room.state !== 'ended' && p.status && p.status.length) {
         const st = document.createElement('span');
         st.className = 'status';
@@ -405,17 +427,17 @@
     for (const id of ['#menu', '#playersPanel', '#picker', '#hatchPanel', '#mapPanel']) $(id).classList.add('hidden');
     const winner = S.room.players.find(p => p.id === S.room.winnerId);
     $('#winnerText').textContent = winner
-      ? (winner.id === socket.id ? 'You are the new Captain!' : `${winner.name} is the new Captain!`)
+      ? (winner.id === S.myId ? 'You are the new Captain!' : `${winner.name} is the new Captain!`)
       : 'Game over!';
     renderRankList($('#resultsList'));
-    const isHost = S.room.hostId === socket.id;
+    const isHost = S.room.hostId === S.myId;
     $('#againBtn').classList.toggle('hidden', !isHost);
     $('#againWait').classList.toggle('hidden', isHost);
     $('#results').classList.remove('hidden');
     MR.Render.confetti(canvas.clientWidth);
-    MR.vibrate(winner && winner.id === socket.id ? [80, 60, 160] : 60);
+    MR.vibrate(winner && winner.id === S.myId ? [80, 60, 160] : 60);
     MR.Sfx.stopAmbient();
-    if (winner && winner.id === socket.id) MR.Sfx.fanfare();
+    if (winner && winner.id === S.myId) MR.Sfx.fanfare();
     else MR.Sfx.splash();
   }
 
@@ -573,7 +595,7 @@
     }
     $('#pickerTitle').textContent = `${it.icon} ${it.name}: pick a rival`;
     $('#pickerDesc').textContent = it.desc;
-    const rivals = S.room.players.filter(p => p.id !== socket.id);
+    const rivals = S.room.players.filter(p => p.id !== S.myId);
     const list = $('#pickerList');
     if (!rivals.length) {
       list.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'No rivals on board!' }));
@@ -683,7 +705,7 @@
   let hatchView = null;
   function drawHatchMap(now) {
     const here = hatchInfo.get(S.my.inHatch);
-    const meInfo = S.room.players.find(p => p.id === socket.id);
+    const meInfo = S.room.players.find(p => p.id === S.myId);
     hatchView = MR.Render.drawMinimap($('#hatchMap'), {
       dpr,
       time: now / 1000,
@@ -722,6 +744,8 @@
 
   // ---------- network ----------
   socket.on('room', room => {
+    // Ignore late updates for a room I just left (or am not part of).
+    if (!S.myId || !room.players.some(p => p.id === S.myId)) return;
     const prev = S.room;
     S.room = room;
     const inGame = room.state !== 'lobby';
@@ -736,11 +760,11 @@
     const ids = new Set(room.players.map(p => p.id));
     for (const id of S.others.keys()) if (!ids.has(id)) S.others.delete(id);
     updateHud();
-    if (room.state === 'ended' && prev && prev.state !== 'ended') showResults();
+    if (room.state === 'ended' && (!prev || prev.state !== 'ended')) showResults();
     else if (room.state === 'ended') {
       // Someone left or the host changed while on the results screen.
       renderRankList($('#resultsList'));
-      const isHost = room.hostId === socket.id;
+      const isHost = room.hostId === S.myId;
       $('#againBtn').classList.toggle('hidden', !isHost);
       $('#againWait').classList.toggle('hidden', isHost);
     }
@@ -834,7 +858,7 @@
     }
     if (fx.kind !== 'sabotage') return;
     const it = itemInfo.get(fx.item);
-    const me = socket.id;
+    const me = S.myId;
     const now = performance.now();
     if (it.target === 'self') {
       if (fx.item === 'coin') {
@@ -890,7 +914,7 @@
   socket.on('state', ({ p }) => {
     const now = performance.now();
     for (const [id, x, y, hidden] of p) {
-      if (id === socket.id) continue;
+      if (id === S.myId) continue;
       let o = S.others.get(id);
       if (!o) S.others.set(id, (o = newOther(x, y)));
       // Popping out of a hatch: appear there instead of sliding across the map.
@@ -907,16 +931,45 @@
     S.lastSent = { x, y, t: performance.now() };
   });
 
-  socket.on('disconnect', () => {
-    if (S.room) toast('Lost connection to the server.');
-    S.room = null;
-    showScreen('home');
+  // ---------- connection drops and rejoining ----------
+  socket.on('you', ({ id, code }) => {
+    S.myId = id;
+    session.set(code);
   });
+
+  socket.on('disconnect', () => {
+    // Keep the match on screen; socket.io reconnects by itself.
+    // The server cancels any task in progress, so close the mini-game too.
+    closeMinigame(false);
+    $('#picker').classList.add('hidden');
+    if (S.room) $('#reconnect').classList.remove('hidden');
+  });
+
+  socket.on('connect', () => {
+    const code = session.get();
+    if (!code) return;
+    socket.emit('rejoin', { code, token: session.token() }, res => {
+      $('#reconnect').classList.add('hidden');
+      if (res.ok) {
+        if (S.room) toast('✔ Back on board!');
+        return;
+      }
+      session.clear();
+      if (S.room) {
+        S.room = null;
+        S.myId = null;
+        showScreen('home');
+        toast(res.error, 3500);
+      }
+    });
+  });
+
+  $('#reconnectLeave').addEventListener('click', leaveRoom);
 
   // ---------- loop ----------
   function updateMe(dt, now) {
     const me = S.me;
-    if (!S.room || S.room.state !== 'playing' || S.mg || S.my.inHatch || !$('#menu').classList.contains('hidden')) {
+    if (!S.room || !socket.connected || S.room.state !== 'playing' || S.mg || S.my.inHatch || !$('#menu').classList.contains('hidden')) {
       me.moving = false;
       return;
     }
@@ -1012,7 +1065,7 @@
 
       const byId = new Map(S.room.players.map(p => [p.id, p]));
       const players = [];
-      const meInfo = byId.get(socket.id);
+      const meInfo = byId.get(S.myId);
       if (meInfo && !S.my.inHatch) {
         players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, isMe: true });
       }

@@ -207,6 +207,16 @@
     </div>
   </div>
 
+  <!-- Shown while the connection is down -->
+  <div id="reconnect" class="overlay reconnect-overlay hidden" role="alert">
+    <div class="panel reconnect-panel">
+      <div class="reconnect-spin">⚓</div>
+      <h2>Reconnecting…</h2>
+      <p class="hint">Your pirate is waiting on deck. You have about 45 seconds to get back.</p>
+      <button id="reconnectLeave" class="btn btn-ghost">Leave game</button>
+    </div>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <script src="/socket.io/socket.io.js"></script>

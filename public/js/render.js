@@ -331,6 +331,14 @@ MR.Render = (() => {
   }
 
   function drawPirate(g, p, t) {
+    if ((p.status || []).includes('offline')) {
+      // Faded while their connection is down
+      g.save();
+      g.globalAlpha = 0.4;
+      drawPirate(g, { ...p, status: p.status.filter(s => s !== 'offline'), name: p.name + ' 📴' }, t);
+      g.restore();
+      return;
+    }
     const color = p.color || '#cccccc';
     const bob = p.moving ? -Math.abs(Math.sin(p.walk)) * 5 : Math.sin(t * 2 + p.x) * 1;
     const step = p.moving ? Math.sin(p.walk) * 6 : 0;

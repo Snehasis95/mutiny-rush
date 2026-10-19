@@ -30,6 +30,8 @@ const NET_MS = 6000;
 const KEY_MS = 30000;
 const KEY_TRIPS = 3;
 const HATCH_MAX_MS = 5000;
+// A player whose connection drops is kept this long so they can rejoin.
+const RECONNECT_GRACE_MS = 45000;
 
 // Drop weights. Players who are behind get better odds of the strong ones.
 const WEIGHTS = { anchor: 18, slime: 18, parrot: 18, rum: 16, net: 12, wind: 14, alarm: 10, fog: 10, coin: 10, storm: 8, wave: 2 };
@@ -56,7 +58,9 @@ class Room {
     this.state = 'lobby'; // lobby | countdown | playing | ended
     this.winnerId = null;
     this.countdownTimer = null;
+    this.countdownEndsAt = 0;
     this.tickTimer = null;
+    this.onEmpty = null; // set by the server: called when the last player is gone
     this.barrels = [];
     this.barrelSeq = 0;
     this.nextBarrelAt = 0;
@@ -72,10 +76,14 @@ class Room {
     return null;
   }
 
-  addPlayer(id, name) {
+  // id: stable player id (survives reconnects). socketId: the current connection. token: secret used to rejoin.
+  addPlayer(id, socketId, token, name) {
     const used = new Set([...this.players.values()].map(p => p.color));
     const color = COLORS.find(c => !used.has(c));
-    const p = { id, name, color, x: map.spawn.x, y: map.spawn.y, budget: BUDGET_CAP, lastMoveAt: 0, tasks: [] };
+    const p = {
+      id, socketId, token, connected: true, dropTimer: null,
+      name, color, x: map.spawn.x, y: map.spawn.y, budget: BUDGET_CAP, lastMoveAt: 0, tasks: [],
+    };
     this.resetPlayer(p);
     this.players.set(id, p);
     if (!this.hostId) this.hostId = id;
@@ -102,10 +110,59 @@ class Room {
   }
 
   removePlayer(id) {
+    const p = this.players.get(id);
+    if (!p) return;
+    clearTimeout(p.dropTimer);
     this.players.delete(id);
-    if (this.hostId === id) this.hostId = this.players.keys().next().value || null;
-    if (this.players.size === 0) this.stopTimers();
-    else this.broadcast();
+    if (this.hostId === id) {
+      const list = [...this.players.values()];
+      this.hostId = (list.find(q => q.connected) || list[0] || {}).id || null;
+    }
+    if (this.players.size === 0) {
+      this.stopTimers();
+      if (this.onEmpty) this.onEmpty();
+    } else {
+      this.broadcast();
+    }
+  }
+
+  findByToken(token) {
+    return [...this.players.values()].find(p => p.token === token) || null;
+  }
+
+  // Connection dropped: keep the pirate for a while so they can come back.
+  disconnectPlayer(id, socketId) {
+    const p = this.players.get(id);
+    if (!p || p.socketId !== socketId) return; // an older connection; the player already moved on
+    p.connected = false;
+    p.socketId = null;
+    p.activeTask = null;
+    if (p.inHatch) this.exitHatch(id);
+    clearTimeout(p.dropTimer);
+    p.dropTimer = setTimeout(() => this.removePlayer(id), RECONNECT_GRACE_MS);
+    this.broadcast();
+  }
+
+  // Same player, new connection: pick up exactly where they left off.
+  reconnectPlayer(p, socketId) {
+    clearTimeout(p.dropTimer);
+    p.dropTimer = null;
+    p.socketId = socketId;
+    p.connected = true;
+    p.lastMoveAt = Date.now();
+    p.budget = BUDGET_CAP;
+    this.broadcast();
+    if (this.state === 'lobby') return;
+    this.sendTasks(p);
+    this.sendMe(p);
+    this.toPlayer(p, 'barrels', this.barrels);
+    this.toPlayer(p, 'correct', { x: p.x, y: p.y });
+    if (this.state === 'countdown') this.toPlayer(p, 'countdown', { ms: Math.max(0, this.countdownEndsAt - Date.now()) });
+  }
+
+  // Private message to one player (skipped while they're offline).
+  toPlayer(p, ev, data) {
+    if (p.connected && p.socketId) this.io.to(p.socketId).emit(ev, data);
   }
 
   isEmpty() {
@@ -152,6 +209,7 @@ class Room {
       this.sendTasks(p);
       this.sendMe(p);
     }
+    this.countdownEndsAt = Date.now() + COUNTDOWN_MS;
     this.io.to(this.code).emit('countdown', { ms: COUNTDOWN_MS });
     this.countdownTimer = setTimeout(() => {
       this.state = 'playing';
@@ -210,7 +268,7 @@ class Room {
         }
         if (p.inHatch && now - p.hatchAt > HATCH_MAX_MS) {
           this.exitHatch(p.id);
-          this.io.to(p.id).emit('notice', { text: 'Too long in the hatch, you got pushed out!' });
+          this.toPlayer(p, 'notice', { text: 'Too long in the hatch, you got pushed out!' });
         }
       }
       // Re-send the room when anyone's status icons change (e.g. slime wore off).
@@ -237,7 +295,7 @@ class Room {
 
     // Inside a hatch or tangled in a net: you stay where you are.
     if (p.inHatch || now < p.netUntil) {
-      this.io.to(id).emit('correct', { x: p.x, y: p.y });
+      this.toPlayer(p, 'correct', { x: p.x, y: p.y });
       return;
     }
 
@@ -259,7 +317,7 @@ class Room {
     }
 
     if (Math.hypot(res.x - x, res.y - y) > 4) {
-      this.io.to(id).emit('correct', { x: res.x, y: res.y });
+      this.toPlayer(p, 'correct', { x: res.x, y: res.y });
     }
   }
 
@@ -355,6 +413,7 @@ class Room {
 
   // Why a sabotage can't target this player right now (null = it can).
   targetError(q, item, now) {
+    if (!q.connected) return 'Offline';
     if (q.inHatch) return 'Hidden in a hatch';
     if (now < q.immuneUntil) return 'Immune right now';
     if (item === 'anchor' && !q.tasks.some(t => !t.done && now >= t.lockedUntil)) return 'No task to anchor';
@@ -416,7 +475,7 @@ class Room {
       q.shield = false;
       this.sendMe(q);
       const it = itemById.get(item);
-      if (it.target === 'all') this.io.to(q.id).emit('notice', { text: `🛡️ Your Lucky Coin blocked ${p.name}'s ${it.name}!` });
+      if (it.target === 'all') this.toPlayer(q, 'notice', { text: `🛡️ Your Lucky Coin blocked ${p.name}'s ${it.name}!` });
       return true;
     }
     q.immuneUntil = now + IMMUNE_MS;
@@ -457,7 +516,7 @@ class Room {
     // Getting sabotaged knocks you out of your mini-game (the parrot waits for the next one).
     if (item !== 'parrot' && q.activeTask) {
       q.activeTask = null;
-      this.io.to(q.id).emit('interrupt');
+      this.toPlayer(q, 'interrupt');
     }
     this.sendMe(q);
     return false;
@@ -483,7 +542,7 @@ class Room {
     p.hatchAt = Date.now();
     p.x = h.x;
     p.y = h.y;
-    this.io.to(id).emit('correct', { x: p.x, y: p.y });
+    this.toPlayer(p, 'correct', { x: p.x, y: p.y });
     this.sendMe(p);
     this.broadcast();
     return null;
@@ -500,7 +559,7 @@ class Room {
     p.hatchAt = Date.now();
     p.x = to.x;
     p.y = to.y;
-    this.io.to(id).emit('correct', { x: p.x, y: p.y });
+    this.toPlayer(p, 'correct', { x: p.x, y: p.y });
     this.sendMe(p);
     return null;
   }
@@ -529,6 +588,7 @@ class Room {
   // Public status icons shown next to each player.
   statusOf(p, now) {
     const s = [];
+    if (!p.connected) s.push('offline');
     if (p.tasks.some(t => !t.done && now < t.lockedUntil)) s.push('anchor');
     if (now < p.slowUntil) s.push('slime');
     if (p.scramble) s.push('parrot');
@@ -554,7 +614,7 @@ class Room {
   // Each player only learns where their own tasks are. Timers are sent as "ms left".
   sendTasks(p) {
     const now = Date.now();
-    this.io.to(p.id).emit('tasks', p.tasks.map(t => ({
+    this.toPlayer(p, 'tasks', p.tasks.map(t => ({
       type: t.type, stationId: t.stationId, x: t.x, y: t.y, area: t.area, done: t.done,
       lockedMs: Math.max(0, t.lockedUntil - now),
     })));
@@ -563,7 +623,7 @@ class Room {
   sendMe(p) {
     const now = Date.now();
     const left = t => Math.max(0, t - now);
-    this.io.to(p.id).emit('me', {
+    this.toPlayer(p, 'me', {
       pickup: p.pickup,
       slowMs: left(p.slowUntil),
       fogMs: left(p.fogUntil),
@@ -593,7 +653,7 @@ class Room {
       options: this.options,
       taskCount: TASK_COUNT,
       players: players.map(p => ({
-        id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,
+        id: p.id, name: p.name, color: p.color, x: p.x, y: p.y, connected: p.connected,
         done: this.doneCount(p),
         status: this.statusOf(p, now),
         // Why each sabotage can't target this player (for the target picker).
@@ -603,6 +663,7 @@ class Room {
   }
 
   stopTimers() {
+    for (const p of this.players.values()) if (!p.connected) clearTimeout(p.dropTimer);
     clearTimeout(this.countdownTimer);
     clearInterval(this.tickTimer);
     this.countdownTimer = null;
