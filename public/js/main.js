@@ -26,11 +26,13 @@
     taskListOpen: false,
     barrels: [],
     my: freshMy(),     // my pickup + effects; times are local performance.now() deadlines
-    busy: false,       // waiting for the server to answer a USE / item tap
+    busy: false,
+    stormSeed: Math.random() * 6.28, // starting wind direction for ⛈️ Storm
+    lastInterruptAt: -1e9,       // waiting for the server to answer a USE / item tap
   };
 
   function freshMy() {
-    return { pickup: null, slowUntil: 0, fogUntil: 0, immuneUntil: 0, keyUntil: 0, keyTrips: 0, shield: false, scramble: false, inHatch: null };
+    return { pickup: null, slowUntil: 0, fogUntil: 0, boostUntil: 0, stormUntil: 0, rumUntil: 0, netUntil: 0, immuneUntil: 0, keyUntil: 0, keyTrips: 0, shield: false, scramble: false, inHatch: null };
   }
 
   const TASKS = MR.Shared.tasks;
@@ -40,7 +42,7 @@
   const itemInfo = new Map(PICKUPS.items.map(i => [i.id, i]));
   const hatchInfo = new Map(MAP.hatches.map(h => [h.id, h]));
   const areaName = (x, y) => (MAP.areas.find(a => x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h) || {}).name || '';
-  const STATUS_ICONS = { anchor: '⚓', slime: '🐙', parrot: '🦜', fog: '🌫️', coin: '🛡️', key: '🗝️', immune: '⏳' };
+  const STATUS_ICONS = { anchor: '⚓', slime: '🐙', parrot: '🦜', fog: '🌫️', storm: '⛈️', rum: '🍺', net: '🥅', wind: '💨', coin: '🛡️', key: '🗝️', immune: '⏳' };
   const statusText = list => (list || []).map(s => STATUS_ICONS[s]).join(' ');
 
   // ---------- screens ----------
@@ -450,6 +452,10 @@
   }
 
   function useNearby() {
+    if (performance.now() < S.my.netUntil) {
+      toast("🥅 You're tangled in a net!");
+      return;
+    }
     const a = useAction();
     if (!a || S.mg || S.busy) return;
     if (a.kind === 'locked') {
@@ -764,6 +770,10 @@
       pickup: m.pickup,
       slowUntil: now + m.slowMs,
       fogUntil: now + m.fogMs,
+      boostUntil: now + m.boostMs,
+      stormUntil: now + m.stormMs,
+      rumUntil: now + m.rumMs,
+      netUntil: now + m.netMs,
       immuneUntil: now + m.immuneMs,
       keyUntil: now + m.keyMs,
       keyTrips: m.keyTrips,
@@ -785,6 +795,7 @@
   socket.on('barrels', list => { S.barrels = list; });
 
   socket.on('interrupt', () => {
+    S.lastInterruptAt = performance.now();
     if (S.mg) {
       closeMinigame(false);
       toast('You got knocked out of your task! Try it again.');
@@ -812,6 +823,7 @@
     slime: by => `🐙 ${by} slimed you! Half speed for 8s.`,
     parrot: by => `🦜 ${by} sent a parrot! Your next task is scrambled.`,
     wave: by => `🌊 ${by}'s Big Wave washed away one of your tasks!`,
+    net: by => `🥅 ${by} caught you in a fishing net! Stuck for 6s.`,
   };
 
   socket.on('fx', fx => {
@@ -823,19 +835,39 @@
     if (fx.kind !== 'sabotage') return;
     const it = itemInfo.get(fx.item);
     const me = socket.id;
-    if (fx.item === 'coin') {
-      if (fx.by === me) toast('🛡️ Lucky Coin ready! It blocks the next sabotage.');
-      else toast(`🛡️ ${nameOf(fx.by)} is carrying a Lucky Coin`, 1800);
-      return;
-    }
-    if (fx.item === 'fog') {
-      if (fx.by === me) toast('🌫️ You rolled in the fog on everyone!');
-      else if (S.my.fogUntil > performance.now()) {
-        toast(`🌫️ ${nameOf(fx.by)} rolled in the fog!`);
-        ouch();
+    const now = performance.now();
+    if (it.target === 'self') {
+      if (fx.item === 'coin') {
+        if (fx.by === me) toast('🛡️ Lucky Coin ready! It blocks the next sabotage.');
+        else toast(`🛡️ ${nameOf(fx.by)} is carrying a Lucky Coin`, 1800);
+      } else if (fx.item === 'wind') {
+        MR.Sfx.gust();
+        if (fx.by === me) toast('💨 Wind in the sails! Double speed for 6s.');
+        else toast(`💨 ${nameOf(fx.by)} caught the wind!`, 1800);
       }
       return;
     }
+    if (it.target === 'all') {
+      const by = nameOf(fx.by);
+      const ALL = {
+        fog: { mine: '🌫️ You rolled in the fog on everyone!', hit: `🌫️ ${by} rolled in the fog!`, affected: S.my.fogUntil > now },
+        storm: { mine: '⛈️ You called down a storm!', hit: `⛈️ ${by} called a storm! Hold on tight for 8s.`, affected: S.my.stormUntil > now },
+        rum: { mine: '🍺 You passed the rum around! Everyone else is seeing double.', hit: `🍺 ${by} got everyone drunk! Your controls are reversed for 8s.`, affected: S.my.rumUntil > now },
+        alarm: { mine: "🔔 You rang the ship's alarm!", hit: `🔔 ${by} rang the alarm! Your task was cancelled.`, affected: now - S.lastInterruptAt < 1500 },
+      }[fx.item];
+      if (fx.item === 'alarm') MR.Sfx.alarm();
+      if (fx.item === 'storm' && (fx.by === me || ALL.affected)) MR.Sfx.thunder();
+      if (fx.item === 'rum' && ALL.affected) MR.Sfx.hiccup();
+      if (fx.by === me) toast(ALL.mine);
+      else if (ALL.affected) {
+        toast(ALL.hit, 3000);
+        ouch();
+      } else if (fx.item === 'alarm') {
+        toast(`🔔 ${by} rang the ship's alarm!`, 1800);
+      }
+      return;
+    }
+    if (fx.item === 'net' && !fx.blocked) MR.Sfx.net();
     if (fx.target === me) {
       if (fx.blocked) toast(`🛡️ Your Lucky Coin blocked ${nameOf(fx.by)}'s ${it.icon}!`);
       else {
@@ -888,14 +920,26 @@
       me.moving = false;
       return;
     }
-    const v = MR.Input.vector();
-    if (v.x || v.y) {
-      const speedMul = now < S.my.slowUntil ? 0.5 : 1;
-      const res = physics.move(me.x, me.y, v.x, v.y, dt, speedMul);
+    if (now < S.my.netUntil) {
+      me.moving = false; // 🥅 tangled in a net
+      return;
+    }
+    let v = MR.Input.vector();
+    if (now < S.my.rumUntil) v = { x: -v.x, y: -v.y }; // 🍺 reversed controls
+    const speedMul = PICKUPS.speedMul(now < S.my.slowUntil, now < S.my.boostUntil);
+    let mx = v.x * speedMul, my = v.y * speedMul;
+    if (now < S.my.stormUntil) {
+      // ⛈️ Gusts push you around; the wind direction swings slowly.
+      const a = (now / 1000) * 0.9 + S.stormSeed;
+      mx += Math.cos(a) * PICKUPS.STORM_DRIFT;
+      my += Math.sin(a) * PICKUPS.STORM_DRIFT;
+    }
+    if (mx || my) {
+      const res = physics.move(me.x, me.y, mx, my, dt);
       me.moving = Math.hypot(res.x - me.x, res.y - me.y) > 0.3;
       me.x = res.x;
       me.y = res.y;
-      if (Math.abs(v.x) > 0.1) me.face = v.x > 0 ? 1 : -1;
+      if (Math.abs(mx) > 0.1) me.face = mx > 0 ? 1 : -1;
       if (me.moving) {
         me.walk += dt * 12;
         // Creaky footstep on each step of the waddle
@@ -991,6 +1035,7 @@
         showHatches: playing && hasKey(now),
         inHatch: playing ? S.my.inHatch : null,
         fog: playing && now < S.my.fogUntil,
+        storm: playing && now < S.my.stormUntil,
         showArrows: playing && !S.my.inHatch && S.room.options.taskArrows,
         showJoystick: playing && !S.mg && !S.my.inHatch,
       });

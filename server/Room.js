@@ -12,9 +12,9 @@ const TASK_COUNT = tasksDef.types.length;
 const SLACK = 40; // extra distance allowed on the server for network lag
 
 // Barrels and sabotage
-const BARREL_EVERY_MS = 10000;
-const BARREL_MAX = 4;
-const BARRELS_AT_START = 2;
+const BARREL_EVERY_MS = 6000;
+const BARREL_MAX = 6;
+const BARRELS_AT_START = 3;
 // Smuggler's Keys lie on the deck in plain sight (not inside barrels)
 const KEY_FIRST_MS = 8000;
 const KEY_EVERY_MS = 20000;
@@ -22,15 +22,18 @@ const KEY_MAX = 2;
 const IMMUNE_MS = 10000;
 const ANCHOR_MS = 15000;
 const SLOW_MS = 8000;
-const SLOW_MUL = 0.5;
 const FOG_MS = 10000;
+const BOOST_MS = 6000;
+const STORM_MS = 8000;
+const RUM_MS = 8000;
+const NET_MS = 6000;
 const KEY_MS = 30000;
 const KEY_TRIPS = 3;
 const HATCH_MAX_MS = 5000;
 
 // Drop weights. Players who are behind get better odds of the strong ones.
-const WEIGHTS = { anchor: 20, slime: 20, parrot: 20, fog: 10, coin: 10, wave: 2 };
-const CATCHUP_WEIGHTS = { ...WEIGHTS, fog: 14, wave: 7 };
+const WEIGHTS = { anchor: 18, slime: 18, parrot: 18, rum: 16, net: 12, wind: 14, alarm: 10, fog: 10, coin: 10, storm: 8, wave: 2 };
+const CATCHUP_WEIGHTS = { ...WEIGHTS, fog: 14, storm: 12, wave: 7 };
 
 // Movement budget: lets a client move at most ~SPEED, with a little slack for network jitter.
 const BUDGET_RATE = physics.SPEED * 1.3;
@@ -41,6 +44,7 @@ const itemById = new Map(pickupsDef.items.map(i => [i.id, i]));
 const hatchById = new Map(map.hatches.map(h => [h.id, h]));
 const areaAt = (x, y) => map.areas.find(a => x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const NETTED = "🥅 You're tangled in a net!";
 const pick = list => list[Math.floor(Math.random() * list.length)];
 
 class Room {
@@ -85,6 +89,10 @@ class Room {
     p.slowUntil = 0;
     p.immuneUntil = 0;
     p.fogUntil = 0;
+    p.boostUntil = 0;
+    p.stormUntil = 0;
+    p.rumUntil = 0;
+    p.netUntil = 0;
     p.shield = false;
     p.scramble = false;
     p.keyUntil = 0;
@@ -222,11 +230,13 @@ class Room {
     if (!p || !Number.isFinite(x) || !Number.isFinite(y)) return;
 
     const now = Date.now();
-    const speedMul = now < p.slowUntil ? SLOW_MUL : 1;
-    p.budget = Math.min(BUDGET_CAP, p.budget + (BUDGET_RATE * speedMul * (now - p.lastMoveAt)) / 1000);
+    // Storm gusts can push you a bit faster than normal, so allow for them too.
+    const speedMul = pickupsDef.speedMul(now < p.slowUntil, now < p.boostUntil) + (now < p.stormUntil ? pickupsDef.STORM_DRIFT : 0);
+    p.budget = Math.min(BUDGET_CAP * Math.max(1, speedMul), p.budget + (BUDGET_RATE * speedMul * (now - p.lastMoveAt)) / 1000);
     p.lastMoveAt = now;
 
-    if (p.inHatch) {
+    // Inside a hatch or tangled in a net: you stay where you are.
+    if (p.inHatch || now < p.netUntil) {
       this.io.to(id).emit('correct', { x: p.x, y: p.y });
       return;
     }
@@ -259,6 +269,7 @@ class Room {
     const p = this.players.get(id);
     if (!p || this.state !== 'playing') return { error: 'The game is not running.' };
     if (p.inHatch) return { error: 'Climb out of the hatch first.' };
+    if (Date.now() < p.netUntil) return { error: NETTED };
     const t = p.tasks.find(tk => tk.type === type);
     if (!t || t.done) return { error: 'That task is not available.' };
     if (Date.now() < t.lockedUntil) return { error: '⚓ That task is anchored! Wait for the chain to fall off.' };
@@ -321,6 +332,7 @@ class Room {
     const p = this.players.get(id);
     if (!p || this.state !== 'playing') return { error: 'The game is not running.' };
     if (p.inHatch) return { error: 'Climb out of the hatch first.' };
+    if (Date.now() < p.netUntil) return { error: NETTED };
     if (p.pickup) return { error: 'Your hands are full! Use your item first.' };
     const b = this.barrels.find(br => br.id === barrelId);
     if (!b) return { error: 'Someone grabbed it first!' };
@@ -363,7 +375,8 @@ class Room {
     const now = Date.now();
 
     if (item.target === 'self') {
-      p.shield = true;
+      if (item.id === 'coin') p.shield = true;
+      if (item.id === 'wind') p.boostUntil = now + BOOST_MS;
       p.pickup = null;
       this.sendMe(p);
       this.feed({ by: p.id, item: item.id });
@@ -375,6 +388,8 @@ class Room {
       p.pickup = null;
       for (const q of this.players.values()) {
         if (q === p || this.targetError(q, item.id, now)) continue;
+        // The alarm only bothers rivals who are in the middle of a task.
+        if (item.id === 'alarm' && !q.activeTask) continue;
         this.hit(p, q, item.id, now);
       }
       this.sendMe(p);
@@ -400,7 +415,8 @@ class Room {
     if (q.shield) {
       q.shield = false;
       this.sendMe(q);
-      if (item === 'fog') this.io.to(q.id).emit('notice', { text: `🛡️ Your Lucky Coin blocked ${p.name}'s Fog!` });
+      const it = itemById.get(item);
+      if (it.target === 'all') this.io.to(q.id).emit('notice', { text: `🛡️ Your Lucky Coin blocked ${p.name}'s ${it.name}!` });
       return true;
     }
     q.immuneUntil = now + IMMUNE_MS;
@@ -420,6 +436,17 @@ class Room {
       case 'fog':
         q.fogUntil = now + FOG_MS;
         break;
+      case 'storm':
+        q.stormUntil = now + STORM_MS;
+        break;
+      case 'rum':
+        q.rumUntil = now + RUM_MS;
+        break;
+      case 'net':
+        q.netUntil = now + NET_MS;
+        break;
+      case 'alarm':
+        break; // the interrupt below is the whole effect
       case 'wave': {
         const t = pick(q.tasks.filter(tk => tk.done));
         t.done = false;
@@ -447,6 +474,7 @@ class Room {
     const h = hatchById.get(hatchId);
     if (!p || this.state !== 'playing') return 'The game is not running.';
     if (!this.hasKey(p)) return 'You need the Smuggler\'s Key.';
+    if (Date.now() < p.netUntil) return NETTED;
     if (p.inHatch) return 'Already inside.';
     if (!h || dist(h, p) > pickupsDef.HATCH_DIST + SLACK) return 'Stand on the hatch.';
     if (p.keyTrips <= 0) return 'Your key is worn out.';
@@ -505,6 +533,10 @@ class Room {
     if (now < p.slowUntil) s.push('slime');
     if (p.scramble) s.push('parrot');
     if (now < p.fogUntil) s.push('fog');
+    if (now < p.stormUntil) s.push('storm');
+    if (now < p.rumUntil) s.push('rum');
+    if (now < p.netUntil) s.push('net');
+    if (now < p.boostUntil) s.push('wind');
     if (p.shield) s.push('coin');
     if (this.hasKey(p, now)) s.push('key');
     if (now < p.immuneUntil) s.push('immune');
@@ -535,6 +567,10 @@ class Room {
       pickup: p.pickup,
       slowMs: left(p.slowUntil),
       fogMs: left(p.fogUntil),
+      boostMs: left(p.boostUntil),
+      stormMs: left(p.stormUntil),
+      rumMs: left(p.rumUntil),
+      netMs: left(p.netUntil),
       immuneMs: left(p.immuneUntil),
       keyMs: p.pickup === 'key' ? left(p.keyUntil) : 0,
       keyTrips: p.keyTrips,
@@ -561,7 +597,7 @@ class Room {
         done: this.doneCount(p),
         status: this.statusOf(p, now),
         // Why each sabotage can't target this player (for the target picker).
-        blocked: Object.fromEntries(['anchor', 'slime', 'parrot', 'wave'].map(i => [i, this.targetError(p, i, now)])),
+        blocked: Object.fromEntries(['anchor', 'slime', 'parrot', 'wave', 'net'].map(i => [i, this.targetError(p, i, now)])),
       })),
     });
   }

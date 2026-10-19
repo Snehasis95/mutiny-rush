@@ -127,6 +127,22 @@ MR.Sfx = (() => {
     // Hatch lid creak
     creak: () => tone(95 + Math.random() * 20, 0.35, 'sawtooth', 0.05, 70),
     splash: () => hiss(0.6, 1800, 300, 0.15, 0.6),
+    // 💨 Wind in the Sails
+    gust: () => hiss(0.9, 300, 1400, 0.16, 0.7),
+    // 🔔 Ship's Alarm: clanging bell
+    alarm: () => [0, 260, 520].forEach(d => setTimeout(() => {
+      tone(880, 0.35, 'triangle', 0.14);
+      tone(1320, 0.25, 'sine', 0.05);
+    }, d)),
+    // ⛈️ Storm: rolling thunder
+    thunder: () => {
+      hiss(1.6, 160, 50, 0.3, 0.5);
+      setTimeout(() => hiss(1.2, 120, 40, 0.22, 0.5), 350);
+    },
+    // 🥅 Fishing Net: whoosh + thud
+    net: () => { hiss(0.3, 1200, 400, 0.14, 1); setTimeout(() => tone(130, 0.2, 'sine', 0.2, 70), 260); },
+    // 🍺 Rum Bottle
+    hiccup: () => { tone(300, 0.12, 'triangle', 0.15, 700); setTimeout(() => tone(320, 0.12, 'triangle', 0.12, 760), 380); },
     beep: last => tone(last ? 880 : 520, last ? 0.4 : 0.15, 'square', 0.08),
     fanfare: () => [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.3, 'triangle'), i * 140)),
   };

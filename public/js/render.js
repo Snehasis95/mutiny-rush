@@ -398,6 +398,75 @@ MR.Render = (() => {
     }
     g.restore();
 
+    if (status.includes('wind')) {
+      // 💨 Speed streaks trailing behind
+      g.save();
+      g.strokeStyle = 'rgba(255,255,255,.75)';
+      g.lineWidth = 3;
+      g.lineCap = 'round';
+      for (const [dy, len] of [[-14, 26], [0, 34], [14, 22]]) {
+        const off = (t * 120 + dy * 7) % 18;
+        const x0 = p.x - p.face * (30 + off);
+        g.beginPath(); g.moveTo(x0, p.y + dy + bob); g.lineTo(x0 - p.face * len, p.y + dy + bob); g.stroke();
+      }
+      g.restore();
+    }
+    if (status.includes('rum')) {
+      // 🍺 Dizzy stars circling above the name
+      g.save();
+      g.font = '20px sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillStyle = '#ffe14d';
+      g.strokeStyle = 'rgba(0,0,0,.5)';
+      g.lineWidth = 3;
+      for (let i = 0; i < 3; i++) {
+        const a = t * 4 + (i * Math.PI * 2) / 3;
+        const sx = p.x + Math.cos(a) * 28, sy = p.y - 76 + bob + Math.sin(a) * 6;
+        g.strokeText('★', sx, sy);
+        g.fillText('★', sx, sy);
+      }
+      g.restore();
+    }
+    if (status.includes('storm')) {
+      // ⛈️ Little rain cloud over their head
+      g.save();
+      const cx = p.x, cy = p.y - 92 + bob;
+      g.fillStyle = 'rgba(70,80,100,.9)';
+      for (const [dx, r] of [[-12, 11], [0, 15], [13, 10]]) {
+        g.beginPath(); g.arc(cx + dx, cy, r, 0, Math.PI * 2); g.fill();
+      }
+      g.strokeStyle = 'rgba(160,200,255,.9)';
+      g.lineWidth = 2;
+      for (let i = 0; i < 3; i++) {
+        const dy = (t * 60 + i * 9) % 18;
+        g.beginPath(); g.moveTo(cx - 10 + i * 10, cy + 10 + dy); g.lineTo(cx - 12 + i * 10, cy + 16 + dy); g.stroke();
+      }
+      g.restore();
+    }
+    if (status.includes('net')) {
+      // 🥅 Rope net thrown over them
+      g.save();
+      const cx = p.x, cy = p.y - 4;
+      g.beginPath(); g.arc(cx, cy, 40, 0, Math.PI * 2); g.clip();
+      g.strokeStyle = 'rgba(214,190,140,.95)';
+      g.lineWidth = 3;
+      const wob = Math.sin(t * 6) * 2;
+      for (let d = -48; d <= 48; d += 12) {
+        g.beginPath(); g.moveTo(cx + d - 48, cy - 48 + wob); g.lineTo(cx + d + 48, cy + 48 + wob); g.stroke();
+        g.beginPath(); g.moveTo(cx + d + 48, cy - 48 - wob); g.lineTo(cx + d - 48, cy + 48 - wob); g.stroke();
+      }
+      g.restore();
+      g.strokeStyle = 'rgba(120,90,50,.95)';
+      g.lineWidth = 4;
+      g.beginPath(); g.arc(p.x, p.y - 4, 40, 0, Math.PI * 2); g.stroke();
+      // Little floats on the rim
+      g.fillStyle = '#e74c3c';
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + 0.3;
+        g.beginPath(); g.arc(p.x + Math.cos(a) * 40, p.y - 4 + Math.sin(a) * 40, 4, 0, Math.PI * 2); g.fill();
+      }
+    }
     if (status.includes('coin')) {
       // Golden shield bubble
       g.save();
@@ -642,6 +711,30 @@ MR.Render = (() => {
     }
   }
 
+  // ⛈️ Dark sky, slanted rain and the odd lightning flash (screen space).
+  function drawStorm(g, cw, ch, t) {
+    g.fillStyle = 'rgba(15,25,45,.35)';
+    g.fillRect(0, 0, cw, ch);
+    g.strokeStyle = 'rgba(200,220,255,.45)';
+    g.lineWidth = 2;
+    g.beginPath();
+    for (let i = 0; i < 90; i++) {
+      // Each drop falls on its own loop; positions come from i so no state is needed.
+      const speed = 700 + (i * 37) % 300;
+      const x0 = (i * 97.3) % (cw + 200) - 100;
+      const y = ((t * speed + i * 53) % (ch + 60)) - 30;
+      const x = x0 + (y * 0.35);
+      g.moveTo(x, y);
+      g.lineTo(x + 7, y + 20);
+    }
+    g.stroke();
+    const flash = Math.sin(t * 0.9) * Math.sin(t * 2.3 + 1);
+    if (flash > 0.93) {
+      g.fillStyle = `rgba(255,255,255,${(flash - 0.93) * 6})`;
+      g.fillRect(0, 0, cw, ch);
+    }
+  }
+
   // Covers the screen except a soft circle around you (fog / hatch).
   function drawDarkness(g, cw, ch, c, r, color) {
     const grad = g.createRadialGradient(c.x, c.y, r * 0.6, c.x, c.y, r * 1.5);
@@ -682,8 +775,13 @@ MR.Render = (() => {
     if (vw > map.W + 600) cam.x = map.W / 2;
 
     // Gentle rocking of the ship (can be turned off in Settings)
-    const sway = s.sway ? Math.sin(s.time * 0.55) * 0.012 : 0;
-    const heave = s.sway ? Math.sin(s.time * 0.8) * 3 : 0;
+    let sway = s.sway ? Math.sin(s.time * 0.55) * 0.012 : 0;
+    let heave = s.sway ? Math.sin(s.time * 0.8) * 3 : 0;
+    if (s.storm) {
+      // ⛈️ The ship pitches hard in a storm (always, even with sway off)
+      sway = Math.sin(s.time * 1.3) * 0.06 + Math.sin(s.time * 2.7) * 0.02;
+      heave = Math.sin(s.time * 1.7) * 10;
+    }
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.translate(cw / 2, ch / 2 + heave);
     g.rotate(sway);
@@ -710,6 +808,7 @@ MR.Render = (() => {
     } else if (s.fog) {
       drawDarkness(g, cw, ch, meScreen, 150 * zoom, 'rgba(200,210,220,.97)');
     }
+    if (s.storm && !s.inHatch) drawStorm(g, cw, ch, s.time);
     if (s.showArrows) {
       const toScreen = (x, y) => ({ x: cw / 2 + (x - cam.x) * zoom, y: ch / 2 + (y - cam.y) * zoom });
       drawEdgeArrows(g, s.tasks, toScreen, cw, ch);
