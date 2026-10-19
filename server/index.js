@@ -70,6 +70,7 @@ io.on('connection', socket => {
   });
 
   socket.on('setColor', color => room && room.setColor(socket.id, color));
+  socket.on('setOption', data => data && room && room.setOption(socket.id, data.key, data.value));
   socket.on('startGame', () => room && room.start(socket.id));
   socket.on('backToLobby', () => room && room.backToLobby(socket.id));
   socket.on('move', data => data && room && room.handleMove(socket.id, data.x, data.y));

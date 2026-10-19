@@ -53,6 +53,8 @@ class Room {
     this.barrelSeq = 0;
     this.nextBarrelAt = 0;
     this.lastStatus = '';
+    // Options the room creator can change in the lobby
+    this.options = { taskArrows: true };
   }
 
   joinError() {
@@ -95,6 +97,13 @@ class Room {
 
   isEmpty() {
     return this.players.size === 0;
+  }
+
+  setOption(byId, key, value) {
+    if (byId !== this.hostId || this.state !== 'lobby') return;
+    if (!(key in this.options) || typeof value !== 'boolean') return;
+    this.options[key] = value;
+    this.broadcast();
   }
 
   setColor(id, color) {
@@ -533,6 +542,7 @@ class Room {
       state: this.state,
       winnerId: this.winnerId,
       colors: COLORS,
+      options: this.options,
       taskCount: TASK_COUNT,
       players: players.map(p => ({
         id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,

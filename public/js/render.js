@@ -679,9 +679,12 @@ MR.Render = (() => {
     stepParticles(g, s.dt, false, ch);
   }
 
-  // Whole-ship map shown while inside a hatch. Returns the view so taps can be mapped to the world.
-  // o = { dpr, time, here: hatch, dests: [{ hatch, label }], tasks: [{ x, y, icon, locked }] }
+  // Whole-ship map (hatch panel and the 🗺️ map). Returns the view so taps can be mapped to the world.
+  // o = { dpr, time, tasks: [{ x, y, icon, locked }],
+  //       here?: hatch, dests?: [{ hatch, label }],          (inside a hatch)
+  //       players?: [{ x, y, color, name, isMe }] }         (🗺️ map)
   function drawMinimap(canvas, o) {
+    const dests = o.dests || [];
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     if (!cw || !ch) return null;
     if (canvas.width !== Math.round(cw * o.dpr) || canvas.height !== Math.round(ch * o.dpr)) {
@@ -721,13 +724,13 @@ MR.Render = (() => {
     g.lineWidth = 3 * k;
     g.setLineDash([8 * k, 6 * k]);
     g.lineDashOffset = -o.time * 40 * k;
-    for (const d of o.dests) {
+    for (const d of dests) {
       g.beginPath(); g.moveTo(o.here.x, o.here.y); g.lineTo(d.hatch.x, d.hatch.y); g.stroke();
     }
     g.restore();
 
     // Destination hatches (tappable)
-    for (const d of o.dests) {
+    for (const d of dests) {
       const h = d.hatch;
       g.fillStyle = `rgba(255,210,60,${0.25 + pulse * 0.25})`;
       g.beginPath(); g.arc(h.x, h.y, (24 + pulse * 6) * k, 0, Math.PI * 2); g.fill();
@@ -744,7 +747,32 @@ MR.Render = (() => {
       g.fillText(d.label, h.x, h.y - 28 * k);
     }
 
-    // You are here
+    // Every pirate: colored dot + name (you get a pulsing ring)
+    if (o.players) {
+      const list = o.players.slice().sort((a, b) => a.isMe - b.isMe); // draw yourself on top
+      for (const p of list) {
+        if (p.isMe) {
+          g.strokeStyle = '#fff';
+          g.lineWidth = 3 * k;
+          g.beginPath(); g.arc(p.x, p.y, (15 + pulse * 4) * k, 0, Math.PI * 2); g.stroke();
+        }
+        g.fillStyle = p.color;
+        g.strokeStyle = 'rgba(0,0,0,.75)';
+        g.lineWidth = 2.5 * k;
+        g.beginPath(); g.arc(p.x, p.y, 9 * k, 0, Math.PI * 2); g.fill(); g.stroke();
+        const label = p.isMe ? 'You' : p.name;
+        g.font = `${p.isMe ? 700 : 600} ${13 * k}px Fredoka, sans-serif`;
+        g.lineWidth = 4 * k;
+        g.strokeStyle = 'rgba(0,0,0,.8)';
+        g.strokeText(label, p.x, p.y - 22 * k);
+        g.fillStyle = p.isMe ? '#ffe28a' : '#fff';
+        g.fillText(label, p.x, p.y - 22 * k);
+      }
+    }
+
+    if (!o.here) return { s, ox, oy };
+
+    // You are here (inside a hatch)
     const h = o.here;
     g.strokeStyle = '#fff';
     g.lineWidth = 3 * k;

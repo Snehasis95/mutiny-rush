@@ -139,7 +139,22 @@
 
     $('#startBtn').classList.toggle('hidden', !isHost);
     $('#waitMsg').classList.toggle('hidden', isHost);
+
+    // Game options: only the Captain can change them; everyone sees them.
+    $('#optionsNote').textContent = isHost ? '' : '(set by the Captain)';
+    document.querySelectorAll('#lobby input[data-option]').forEach(inp => {
+      inp.checked = !!room.options[inp.dataset.option];
+      inp.disabled = !isHost;
+    });
   }
+
+  document.querySelectorAll('#lobby input[data-option]').forEach(inp => inp.addEventListener('change', () => {
+    if (!S.room || S.room.hostId !== socket.id) {
+      inp.checked = !!(S.room && S.room.options[inp.dataset.option]);
+      return;
+    }
+    socket.emit('setOption', { key: inp.dataset.option, value: inp.checked });
+  }));
 
   $('#startBtn').addEventListener('click', () => {
     goFullscreen();
@@ -248,7 +263,7 @@
     S.my = freshMy();
     S.busy = false;
     closeMinigame(false);
-    for (const id of ['#menu', '#playersPanel', '#results', '#picker', '#hatchPanel']) $(id).classList.add('hidden');
+    for (const id of ['#menu', '#playersPanel', '#results', '#picker', '#hatchPanel', '#mapPanel']) $(id).classList.add('hidden');
     renderTaskList();
     showScreen('game');
     if (!MR.Render.isReady()) {
@@ -346,9 +361,33 @@
   });
   $('#playersClose').addEventListener('click', () => $('#playersPanel').classList.add('hidden'));
 
+  // ---------- ship map (🗺️): where every pirate is ----------
+  const mapPanel = $('#mapPanel');
+  $('#mapBtn').addEventListener('click', () => {
+    if (S.room && S.room.state === 'playing' && performance.now() < S.my.fogUntil) {
+      toast('🌫️ Too foggy to read the map!');
+      return;
+    }
+    mapPanel.classList.remove('hidden');
+  });
+  $('#mapClose').addEventListener('click', () => mapPanel.classList.add('hidden'));
+  mapPanel.addEventListener('click', e => { if (e.target === mapPanel) mapPanel.classList.add('hidden'); });
+
+  // Redrawn every frame while open, so the dots move live.
+  function drawShipMap(now, players) {
+    MR.Render.drawMinimap($('#shipMap'), {
+      dpr,
+      time: now / 1000,
+      players,
+      tasks: S.room.state === 'ended' ? [] : S.tasks.filter(t => !t.done).map(t => ({
+        x: t.x, y: t.y, icon: typeInfo.get(t.type).icon, locked: t.lockedUntil > now,
+      })),
+    });
+  }
+
   function showResults() {
     closeMinigame(false);
-    for (const id of ['#menu', '#playersPanel', '#picker', '#hatchPanel']) $(id).classList.add('hidden');
+    for (const id of ['#menu', '#playersPanel', '#picker', '#hatchPanel', '#mapPanel']) $(id).classList.add('hidden');
     const winner = S.room.players.find(p => p.id === S.room.winnerId);
     $('#winnerText').textContent = winner
       ? (winner.id === socket.id ? 'You are the new Captain!' : `${winner.name} is the new Captain!`)
@@ -720,6 +759,8 @@
       inHatch: m.inHatch,
       hatchEnteredAt: m.inHatch && m.inHatch === wasIn ? S.my.hatchEnteredAt : now,
     };
+    // Fog hides the map; the hatch has its own map.
+    if (m.fogMs > 0 || m.inHatch) $('#mapPanel').classList.add('hidden');
     if (m.inHatch && m.inHatch !== wasIn) {
       // Entering or moving through the tunnels
       MR.Input.reset();
@@ -937,13 +978,14 @@
         showHatches: playing && hasKey(now),
         inHatch: playing ? S.my.inHatch : null,
         fog: playing && now < S.my.fogUntil,
-        showArrows: playing && !S.my.inHatch,
+        showArrows: playing && !S.my.inHatch && S.room.options.taskArrows,
         showJoystick: playing && !S.mg && !S.my.inHatch,
       });
       updateUseButton();
       updatePickupBtn(now);
       updateHatchPanel(now);
       if (S.my.inHatch && playing) drawHatchMap(now);
+      if (!mapPanel.classList.contains('hidden')) drawShipMap(now, players);
       // Keep anchor countdowns in the task list ticking.
       if (S.taskListOpen && now - lastListRefresh > 500 && S.tasks.some(t => t.lockedUntil > now - 1000)) {
         lastListRefresh = now;
