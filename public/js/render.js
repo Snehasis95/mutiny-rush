@@ -419,8 +419,47 @@ MR.Render = (() => {
     g.fillText(p.name, p.x, p.y - 52 + bob);
   }
 
+  // Smuggler's Key lying on the deck: a spinning, glowing gold key.
+  function drawKey(g, b, time) {
+    const bob = Math.sin(time * 3 + b.id) * 5;
+    const x = b.x, y = b.y + bob;
+    g.save();
+    g.fillStyle = 'rgba(0,0,0,.25)';
+    g.beginPath(); g.ellipse(b.x, b.y + 24, 20, 6, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = `rgba(255,215,80,${0.3 + 0.2 * Math.sin(time * 5)})`;
+    g.beginPath(); g.arc(x, y, 38, 0, Math.PI * 2); g.fill();
+
+    g.translate(x, y);
+    g.rotate(-0.6 + Math.sin(time * 1.5 + b.id) * 0.25);
+    g.scale(1.3, 1.3);
+    g.lineJoin = 'round';
+    g.fillStyle = '#ffcc33';
+    g.strokeStyle = '#7a5300';
+    g.lineWidth = 3;
+    // Bow (the ring you hold)
+    g.beginPath(); g.arc(-16, 0, 12, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.fillStyle = '#7a5300';
+    g.beginPath(); g.arc(-16, 0, 5, 0, Math.PI * 2); g.fill();
+    // Shaft
+    g.fillStyle = '#ffcc33';
+    g.beginPath(); g.rect(-5, -4, 30, 8); g.fill(); g.stroke();
+    // Teeth
+    g.beginPath(); g.rect(16, 4, 6, 9); g.fill(); g.stroke();
+    g.beginPath(); g.rect(8, 4, 5, 6); g.fill(); g.stroke();
+    // Shine
+    g.fillStyle = 'rgba(255,255,255,.7)';
+    g.fillRect(-2, -2, 18, 2);
+    g.restore();
+
+    // Sparkle
+    const sa = time * 2.5 + b.id;
+    g.fillStyle = '#fff';
+    g.beginPath(); g.arc(x + Math.cos(sa) * 28, y - 14 + Math.sin(sa) * 10, 3, 0, Math.PI * 2); g.fill();
+  }
+
   // Mystery barrel bobbing in place with a "?".
   function drawBarrel(g, b, time) {
+    if (b.kind === 'key') return drawKey(g, b, time);
     const bob = Math.sin(time * 3 + b.id) * 4;
     const x = b.x, y = b.y + bob;
     g.save();

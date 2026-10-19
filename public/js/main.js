@@ -373,6 +373,19 @@
   $('#mapClose').addEventListener('click', () => mapPanel.classList.add('hidden'));
   mapPanel.addEventListener('click', e => { if (e.target === mapPanel) mapPanel.classList.add('hidden'); });
 
+  // Greyed out with a fog icon while you're fogged.
+  let mapBtnFogged = null;
+  function updateMapBtn(fogged) {
+    if (fogged === mapBtnFogged) return;
+    mapBtnFogged = fogged;
+    const btn = $('#mapBtn');
+    btn.classList.toggle('fogged', fogged);
+    btn.textContent = fogged ? '🌫️' : '🗺️';
+    btn.setAttribute('aria-label', fogged ? 'Ship map (too foggy)' : 'Ship map');
+    btn.setAttribute('aria-disabled', String(fogged));
+    if (fogged) mapPanel.classList.add('hidden');
+  }
+
   // Redrawn every frame while open, so the dots move live.
   function drawShipMap(now, players) {
     MR.Render.drawMinimap($('#shipMap'), {
@@ -431,7 +444,7 @@
     }
     if (!S.my.pickup) {
       const b = S.barrels.find(br => dist(br) <= PICKUPS.GRAB_DIST);
-      if (b) return { kind: 'barrel', id: b.id, icon: '🛢️' };
+      if (b) return { kind: 'barrel', id: b.id, icon: b.kind === 'key' ? '🗝️' : '🛢️' };
     }
     return null;
   }
@@ -986,6 +999,7 @@
       updateHatchPanel(now);
       if (S.my.inHatch && playing) drawHatchMap(now);
       if (!mapPanel.classList.contains('hidden')) drawShipMap(now, players);
+      updateMapBtn(playing && now < S.my.fogUntil);
       // Keep anchor countdowns in the task list ticking.
       if (S.taskListOpen && now - lastListRefresh > 500 && S.tasks.some(t => t.lockedUntil > now - 1000)) {
         lastListRefresh = now;

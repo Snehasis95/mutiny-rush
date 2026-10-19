@@ -15,6 +15,10 @@ const SLACK = 40; // extra distance allowed on the server for network lag
 const BARREL_EVERY_MS = 10000;
 const BARREL_MAX = 4;
 const BARRELS_AT_START = 2;
+// Smuggler's Keys lie on the deck in plain sight (not inside barrels)
+const KEY_FIRST_MS = 8000;
+const KEY_EVERY_MS = 20000;
+const KEY_MAX = 2;
 const IMMUNE_MS = 10000;
 const ANCHOR_MS = 15000;
 const SLOW_MS = 8000;
@@ -25,7 +29,7 @@ const KEY_TRIPS = 3;
 const HATCH_MAX_MS = 5000;
 
 // Drop weights. Players who are behind get better odds of the strong ones.
-const WEIGHTS = { anchor: 20, slime: 20, parrot: 20, key: 18, fog: 10, coin: 10, wave: 2 };
+const WEIGHTS = { anchor: 20, slime: 20, parrot: 20, fog: 10, coin: 10, wave: 2 };
 const CATCHUP_WEIGHTS = { ...WEIGHTS, fog: 14, wave: 7 };
 
 // Movement budget: lets a client move at most ~SPEED, with a little slack for network jitter.
@@ -52,6 +56,7 @@ class Room {
     this.barrels = [];
     this.barrelSeq = 0;
     this.nextBarrelAt = 0;
+    this.nextKeyAt = 0;
     this.lastStatus = '';
     // Options the room creator can change in the lobby
     this.options = { taskArrows: true };
@@ -146,6 +151,7 @@ class Room {
       for (const p of this.players.values()) p.lastMoveAt = now;
       for (let i = 0; i < BARRELS_AT_START; i++) this.spawnBarrel();
       this.nextBarrelAt = now + BARREL_EVERY_MS;
+      this.nextKeyAt = now + KEY_FIRST_MS;
       this.broadcast();
       this.tickTimer = setInterval(() => this.tick(), TICK_MS);
     }, COUNTDOWN_MS);
@@ -182,6 +188,10 @@ class Room {
       if (now >= this.nextBarrelAt) {
         this.spawnBarrel();
         this.nextBarrelAt = now + BARREL_EVERY_MS;
+      }
+      if (now >= this.nextKeyAt) {
+        this.spawnBarrel('key');
+        this.nextKeyAt = now + KEY_EVERY_MS;
       }
       for (const p of this.players.values()) {
         // Key runs out: you get pushed out of any hatch and the slot frees up.
@@ -281,16 +291,18 @@ class Room {
     if (p) p.activeTask = null;
   }
 
-  // ---------------- barrels ----------------
+  // ---------------- barrels + keys ----------------
+  // this.barrels holds both: { id, x, y, kind: 'barrel' | 'key' }
 
-  spawnBarrel() {
-    if (this.barrels.length >= BARREL_MAX) return;
+  spawnBarrel(kind = 'barrel') {
+    const count = this.barrels.filter(b => b.kind === kind).length;
+    if (count >= (kind === 'key' ? KEY_MAX : BARREL_MAX)) return;
     const players = [...this.players.values()];
     const free = map.barrelSpots.filter(s =>
       !this.barrels.some(b => dist(b, s) < 50) && !players.some(p => dist(p, s) < 120));
     if (!free.length) return;
     const spot = pick(free);
-    this.barrels.push({ id: ++this.barrelSeq, x: spot.x, y: spot.y });
+    this.barrels.push({ id: ++this.barrelSeq, x: spot.x, y: spot.y, kind });
     this.sendBarrels();
   }
 
@@ -312,10 +324,10 @@ class Room {
     if (p.pickup) return { error: 'Your hands are full! Use your item first.' };
     const b = this.barrels.find(br => br.id === barrelId);
     if (!b) return { error: 'Someone grabbed it first!' };
-    if (dist(b, p) > pickupsDef.GRAB_DIST + SLACK) return { error: 'Get closer to the barrel.' };
+    if (dist(b, p) > pickupsDef.GRAB_DIST + SLACK) return { error: b.kind === 'key' ? 'Get closer to the key.' : 'Get closer to the barrel.' };
 
     this.barrels = this.barrels.filter(br => br !== b);
-    const item = this.rollItem(p);
+    const item = b.kind === 'key' ? 'key' : this.rollItem(p);
     p.pickup = item;
     if (item === 'key') {
       p.keyUntil = Date.now() + KEY_MS;
