@@ -513,3 +513,53 @@ input:focus { border-color: var(--wood); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .btn-icon.fogged { opacity: .45; filter: grayscale(1); border-style: dashed; }
+
+/* ---------- 🍲 Cook the Grog ---------- */
+.grog { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-around; gap: 12px; padding: 12px; }
+.grog-card {
+  min-width: 150px; background: var(--parch); color: var(--ink); border: 3px solid var(--parch-edge);
+  border-radius: 12px; padding: 10px 14px; font-weight: 600; transform: rotate(-2deg);
+}
+.grog-card-title { font-family: 'Pirata One', serif; font-size: 22px; margin-bottom: 4px; }
+.grog-line { font-size: 17px; padding: 2px 0; }
+.grog-line.done { color: var(--go-d); text-decoration: line-through; }
+.grog-card.hidden-recipe .grog-line:not(.done) { color: var(--ink-soft); }
+.grog-pot { position: relative; width: 150px; height: 130px; flex: none; }
+.grog-bowl {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 100px;
+  background: radial-gradient(ellipse at 50% 18%, #7fae3f 0 32%, #2f2f2f 33%);
+  border-radius: 20px 20px 70px 70px; border: 5px solid #1a1a1a;
+}
+.grog-steam { position: absolute; top: -6px; width: 100%; text-align: center; font-size: 30px; color: rgba(255, 255, 255, .7); }
+.grog-pot.bubble .grog-bowl { animation: grog-bubble .35s; }
+.grog-pot.splash .grog-bowl { animation: shake .4s; filter: hue-rotate(-60deg); }
+@keyframes grog-bubble { 50% { transform: scale(1.08); } }
+.grog-shelf { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.grog-ing {
+  width: 62px; height: 62px; font-size: 32px; border-radius: 14px; cursor: grab; touch-action: none;
+  background: var(--parch); border: 3px solid var(--parch-edge); box-shadow: 0 4px 0 var(--parch-edge);
+}
+.grog-ing:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--parch-edge); }
+.grog-ghost { position: fixed; z-index: 50; font-size: 40px; transform: translate(-50%, -50%); pointer-events: none; }
+@media (max-height: 430px) {
+  .grog-ing { width: 54px; height: 54px; font-size: 28px; }
+  .grog-pot { width: 120px; height: 110px; }
+  .grog-bowl { height: 84px; }
+  .grog-line { font-size: 15px; }
+}
+
+/* ---------- Lobby options summary + Captain's options panel ---------- */
+.options-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 6px; }
+.options-summary { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.options-btn { font-size: 20px; padding: 6px 12px; flex: none; }
+.stepper-row { cursor: default; }
+.stepper { display: flex; align-items: center; gap: 10px; }
+.step-btn {
+  width: 40px; height: 40px; border-radius: 50%; cursor: pointer;
+  font: 700 24px 'Fredoka', sans-serif; line-height: 1; color: #fff;
+  background: var(--wood); border: 2px solid #3d2612; box-shadow: 0 3px 0 #3d2612;
+}
+.step-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #3d2612; }
+.step-btn:disabled { opacity: .35; cursor: default; }
+.step-value { min-width: 28px; text-align: center; font-size: 22px; font-weight: 700; }
+#optionsPanel .hint { margin: 8px 0 12px; }

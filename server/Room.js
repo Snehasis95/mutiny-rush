@@ -2,13 +2,12 @@ const map = require('../shared/map');
 const physics = require('../shared/physics');
 const tasksDef = require('../shared/tasks');
 const pickupsDef = require('../shared/pickups');
-const { assign } = require('./taskAssign');
+const { assign, pickTypes } = require('./taskAssign');
 
 const MAX_PLAYERS = 6;
 const COUNTDOWN_MS = 3000;
 const TICK_MS = 50; // 20 updates per second
 const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#e67e22', '#9b59b6', '#ff6fae', '#1abc9c'];
-const TASK_COUNT = tasksDef.types.length;
 const SLACK = 40; // extra distance allowed on the server for network lag
 
 // Barrels and sabotage
@@ -67,7 +66,7 @@ class Room {
     this.nextKeyAt = 0;
     this.lastStatus = '';
     // Options the room creator can change in the lobby
-    this.options = { taskArrows: true };
+    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS };
   }
 
   joinError() {
@@ -171,7 +170,12 @@ class Room {
 
   setOption(byId, key, value) {
     if (byId !== this.hostId || this.state !== 'lobby') return;
-    if (!(key in this.options) || typeof value !== 'boolean') return;
+    // Each option only accepts sensible values.
+    const valid = {
+      taskArrows: v => typeof v === 'boolean',
+      taskCount: v => Number.isInteger(v) && v >= tasksDef.MIN_TASKS && v <= tasksDef.MAX_TASKS,
+    };
+    if (!valid[key] || !valid[key](value)) return;
     this.options[key] = value;
     this.broadcast();
   }
@@ -189,7 +193,8 @@ class Room {
   start(byId) {
     if (byId !== this.hostId || this.state !== 'lobby') return;
     const list = [...this.players.values()];
-    const assigned = assign(list.length);
+    // Same random set of task types for everyone this round.
+    const assigned = assign(list.length, pickTypes(this.options.taskCount));
     list.forEach((p, i) => {
       const a = (i / list.length) * Math.PI * 2 - Math.PI / 2;
       p.x = map.spawn.x + Math.cos(a) * map.spawn.r;
@@ -420,7 +425,7 @@ class Room {
     if (item === 'wave') {
       const done = this.doneCount(q);
       if (done === 0) return 'No finished tasks';
-      if (done >= TASK_COUNT - 1) return 'Too close to winning';
+      if (done >= q.tasks.length - 1) return 'Too close to winning';
     }
     return null;
   }
@@ -651,7 +656,7 @@ class Room {
       winnerId: this.winnerId,
       colors: COLORS,
       options: this.options,
-      taskCount: TASK_COUNT,
+      taskCount: this.options.taskCount,
       players: players.map(p => ({
         id: p.id, name: p.name, color: p.color, x: p.x, y: p.y, connected: p.connected,
         done: this.doneCount(p),

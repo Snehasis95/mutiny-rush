@@ -65,8 +65,13 @@
           <h2>Your color</h2>
           <div id="colorGrid" class="color-grid"></div>
           <div class="game-options">
-            <h2>Game options <span id="optionsNote" class="muted"></span></h2>
-            <label class="toggle"><span>🎯 Arrows to tasks</span><input type="checkbox" data-option="taskArrows"><i></i></label>
+            <div class="options-row">
+              <div>
+                <h2>Game options <span id="optionsNote" class="muted"></span></h2>
+                <div id="optionsSummary" class="options-summary"></div>
+              </div>
+              <button id="optionsBtn" class="btn btn-small options-btn" aria-label="Change game options">⚙️</button>
+            </div>
           </div>
         </div>
       </div>
@@ -193,6 +198,27 @@
       <p>Turn your phone sideways to play</p>
     </div>
   </section>
+
+  <!-- Game options (Captain only, from the lobby) -->
+  <div id="optionsPanel" class="overlay settings-overlay hidden">
+    <div class="panel settings-panel">
+      <div class="panel-head">
+        <h2>⚙️ Game options</h2>
+        <button id="optionsClose" class="btn-icon dark" aria-label="Close">✕</button>
+      </div>
+      <label class="toggle"><span>🎯 Arrows to tasks</span><input type="checkbox" data-option="taskArrows"><i></i></label>
+      <div class="toggle stepper-row">
+        <span>📋 Tasks per player</span>
+        <div class="stepper">
+          <button id="taskCountDown" class="step-btn" aria-label="Fewer tasks">−</button>
+          <span id="taskCountValue" class="step-value">6</span>
+          <button id="taskCountUp" class="step-btn" aria-label="More tasks">+</button>
+        </div>
+      </div>
+      <p class="hint">Each game picks this many task types at random. Everyone gets the same types.</p>
+      <button id="optionsDone" class="btn btn-go">Done</button>
+    </div>
+  </div>
 
   <!-- Settings (reachable from home, lobby and the in-game menu) -->
   <div id="settings" class="overlay settings-overlay hidden">

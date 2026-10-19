@@ -161,21 +161,48 @@
     $('#startBtn').classList.toggle('hidden', !isHost);
     $('#waitMsg').classList.toggle('hidden', isHost);
 
-    // Game options: only the Captain can change them; everyone sees them.
-    $('#optionsNote').textContent = isHost ? '' : '(set by the Captain)';
-    document.querySelectorAll('#lobby input[data-option]').forEach(inp => {
-      inp.checked = !!room.options[inp.dataset.option];
-      inp.disabled = !isHost;
-    });
+    // Game options: everyone sees a summary; only the Captain gets the ⚙️ button.
+    const o = room.options;
+    $('#optionsSummary').textContent = `🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 📋 ${o.taskCount} tasks`;
+    $('#optionsNote').textContent = isHost ? '' : 'Set by the Captain';
+    $('#optionsBtn').classList.toggle('hidden', !isHost);
+    renderOptionsPanel();
   }
 
-  document.querySelectorAll('#lobby input[data-option]').forEach(inp => inp.addEventListener('change', () => {
-    if (!S.room || S.room.hostId !== S.myId) {
-      inp.checked = !!(S.room && S.room.options[inp.dataset.option]);
-      return;
-    }
-    socket.emit('setOption', { key: inp.dataset.option, value: inp.checked });
+  // ---------- game options panel (Captain only) ----------
+  const optionsPanel = $('#optionsPanel');
+  function renderOptionsPanel() {
+    if (!S.room) return;
+    const isHost = S.room.hostId === S.myId;
+    if (!isHost) optionsPanel.classList.add('hidden'); // lost the Captain role
+    const o = S.room.options;
+    optionsPanel.querySelectorAll('input[data-option]').forEach(inp => { inp.checked = !!o[inp.dataset.option]; });
+    $('#taskCountValue').textContent = o.taskCount;
+    $('#taskCountDown').disabled = o.taskCount <= TASKS.MIN_TASKS;
+    $('#taskCountUp').disabled = o.taskCount >= TASKS.MAX_TASKS;
+  }
+
+  $('#optionsBtn').addEventListener('click', () => {
+    renderOptionsPanel();
+    optionsPanel.classList.remove('hidden');
+  });
+  $('#optionsClose').addEventListener('click', () => optionsPanel.classList.add('hidden'));
+  $('#optionsDone').addEventListener('click', () => optionsPanel.classList.add('hidden'));
+  optionsPanel.addEventListener('click', e => { if (e.target === optionsPanel) optionsPanel.classList.add('hidden'); });
+
+  const setOption = (key, value) => {
+    if (S.room && S.room.hostId === S.myId) socket.emit('setOption', { key, value });
+  };
+  optionsPanel.querySelectorAll('input[data-option]').forEach(inp => inp.addEventListener('change', () => {
+    setOption(inp.dataset.option, inp.checked);
   }));
+  const stepTasks = d => {
+    if (!S.room) return;
+    const n = Math.min(TASKS.MAX_TASKS, Math.max(TASKS.MIN_TASKS, S.room.options.taskCount + d));
+    if (n !== S.room.options.taskCount) setOption('taskCount', n);
+  };
+  $('#taskCountDown').addEventListener('click', () => stepTasks(-1));
+  $('#taskCountUp').addEventListener('click', () => stepTasks(1));
 
   $('#startBtn').addEventListener('click', () => {
     goFullscreen();
@@ -317,7 +344,7 @@
   // ---------- task list (📋) ----------
   function renderTaskList() {
     const done = S.tasks.filter(t => t.done).length;
-    $('#taskCount').textContent = `${done}/${S.tasks.length || TASKS.types.length}`;
+    $('#taskCount').textContent = `${done}/${S.tasks.length || (S.room && S.room.taskCount) || TASKS.DEFAULT_TASKS}`;
     const list = $('#taskList');
     list.classList.toggle('hidden', !S.taskListOpen || !S.tasks.length);
     $('#tasksBtn').setAttribute('aria-expanded', String(S.taskListOpen));

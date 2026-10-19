@@ -1,9 +1,10 @@
-// Gives each player one station per task type, keeping walking distance roughly equal
+// Gives each player one station per chosen task type, keeping walking distance roughly equal
 // and spreading players across different stations where possible.
 const map = require('../shared/map');
 const { types, stations } = require('../shared/tasks');
 
-const byType = types.map(t => stations.filter(s => s.type === t.id));
+const SAMPLES = 1500;     // random station combos looked at per game
+const FAIR_BAND = 0.06;   // combos within 6% of the median walk count as fair
 
 // Greedy nearest-next walk from the spawn point through all stations.
 function tourLength(list) {
@@ -22,23 +23,43 @@ function tourLength(list) {
   return total;
 }
 
-// Every combination of one station per type (4^6 = 4096), scored by walking distance.
-const combos = [];
-(function build(i, acc) {
-  if (i === byType.length) return combos.push({ list: acc, len: tourLength(acc) });
-  for (const s of byType[i]) build(i + 1, acc.concat(s));
-})(0, []);
-combos.sort((a, b) => a.len - b.len);
-const median = combos[Math.floor(combos.length / 2)].len;
-const fair = combos.filter(c => Math.abs(c.len - median) <= median * 0.06);
+const pick = list => list[Math.floor(Math.random() * list.length)];
 
-function assign(playerCount) {
+// Picks `count` task types at random (everyone in the game gets the same types).
+function pickTypes(count) {
+  const ids = types.map(t => t.id);
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  return ids.slice(0, count);
+}
+
+function assign(playerCount, typeIds) {
+  const byType = typeIds.map(id => stations.filter(s => s.type === id));
+
+  // Sample random combos (one station per type) and keep the ones with a typical walk length.
+  const seen = new Set();
+  const combos = [];
+  for (let i = 0; i < SAMPLES; i++) {
+    const list = byType.map(pick);
+    const key = list.map(s => s.id).join();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    combos.push({ list, len: tourLength(list) });
+  }
+  combos.sort((a, b) => a.len - b.len);
+  const median = combos[Math.floor(combos.length / 2)].len;
+  let fair = combos.filter(c => Math.abs(c.len - median) <= median * FAIR_BAND);
+  if (fair.length < playerCount) fair = combos; // tiny games: just use everything
+
+  // Hand out combos, preferring stations nobody else has yet.
   const used = new Map();
   const result = [];
   for (let i = 0; i < playerCount; i++) {
     let best = null, bestScore = Infinity;
     for (let k = 0; k < 300; k++) {
-      const c = fair[Math.floor(Math.random() * fair.length)];
+      const c = pick(fair);
       const score = c.list.reduce((n, s) => n + (used.get(s.id) || 0), 0);
       if (score < bestScore) { best = c; bestScore = score; }
       if (score === 0) break;
@@ -49,4 +70,4 @@ function assign(playerCount) {
   return result;
 }
 
-module.exports = { assign, fairRange: [fair[0].len, fair[fair.length - 1].len], fairCount: fair.length };
+module.exports = { assign, pickTypes, tourLength };
