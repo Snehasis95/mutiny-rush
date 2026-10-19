@@ -28,6 +28,7 @@
   };
 
   const SEND_MS = 50;
+  const MAX_PIRATES = 6; // people + bots in one room
   const INTERP_MS = 110; // render other players this far in the past for smoothness
 
   const S = {
@@ -141,7 +142,25 @@
       name.textContent = p.name;
       const tag = document.createElement('span');
       tag.className = 'tag';
-      tag.textContent = [p.connected === false ? '📴 reconnecting' : '', p.id === room.hostId ? '👑 Captain' : '', p.id === S.myId ? '(you)' : ''].filter(Boolean).join(' ');
+      // Each label has a long form and a short form (small screens show the short one).
+      const labels = [
+        p.isBot && ['', 'Bot'],
+        p.connected === false && ['📴', '📴 reconnecting'],
+        p.id === room.hostId && ['👑', '👑 Captain'],
+        p.id === S.myId && ['', '(you)'],
+      ].filter(Boolean);
+      for (const [short, long] of labels) {
+        const l = document.createElement('span');
+        l.className = 'tag-long';
+        l.textContent = long + ' ';
+        tag.appendChild(l);
+        if (short) {
+          const sh = document.createElement('span');
+          sh.className = 'tag-short';
+          sh.textContent = short;
+          tag.appendChild(sh);
+        }
+      }
       li.append(dot, name, tag);
       return li;
     }));
@@ -163,7 +182,8 @@
 
     // Game options: everyone sees a summary; only the Captain gets the ⚙️ button.
     const o = room.options;
-    $('#optionsSummary').textContent = `🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 📋 ${o.taskCount} tasks`;
+    const botsHere = room.players.filter(p => p.isBot).length; // real number (bots give up seats to people)
+    $('#optionsSummary').textContent = `🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 📋 ${o.taskCount} tasks · 🤖 ${botsHere} bot${botsHere === 1 ? '' : 's'}`;
     $('#optionsNote').textContent = isHost ? '' : 'Set by the Captain';
     $('#optionsBtn').classList.toggle('hidden', !isHost);
     renderOptionsPanel();
@@ -180,6 +200,11 @@
     $('#taskCountValue').textContent = o.taskCount;
     $('#taskCountDown').disabled = o.taskCount <= TASKS.MIN_TASKS;
     $('#taskCountUp').disabled = o.taskCount >= TASKS.MAX_TASKS;
+    const humans = S.room.players.filter(p => !p.isBot).length;
+    const botsHere = S.room.players.length - humans;
+    $('#botCountValue').textContent = botsHere;
+    $('#botCountDown').disabled = botsHere <= 0;
+    $('#botCountUp').disabled = botsHere >= MAX_PIRATES - humans;
   }
 
   $('#optionsBtn').addEventListener('click', () => {
@@ -203,6 +228,15 @@
   };
   $('#taskCountDown').addEventListener('click', () => stepTasks(-1));
   $('#taskCountUp').addEventListener('click', () => stepTasks(1));
+  const stepBots = d => {
+    if (!S.room) return;
+    const humans = S.room.players.filter(p => !p.isBot).length;
+    const botsHere = S.room.players.length - humans;
+    const n = Math.min(MAX_PIRATES - humans, Math.max(0, botsHere + d));
+    if (n !== botsHere) setOption('botCount', n);
+  };
+  $('#botCountDown').addEventListener('click', () => stepBots(-1));
+  $('#botCountUp').addEventListener('click', () => stepBots(1));
 
   $('#startBtn').addEventListener('click', () => {
     goFullscreen();

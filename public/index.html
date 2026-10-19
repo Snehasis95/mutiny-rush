@@ -215,7 +215,15 @@
           <button id="taskCountUp" class="step-btn" aria-label="More tasks">+</button>
         </div>
       </div>
-      <p class="hint">Each game picks this many task types at random. Everyone gets the same types.</p>
+      <div class="toggle stepper-row">
+        <span>🤖 Bots</span>
+        <div class="stepper">
+          <button id="botCountDown" class="step-btn" aria-label="Fewer bots">−</button>
+          <span id="botCountValue" class="step-value">0</span>
+          <button id="botCountUp" class="step-btn" aria-label="More bots">+</button>
+        </div>
+      </div>
+      <p class="hint">Each game picks the tasks at random, and everyone gets the same ones. Bots give up their seat when a friend joins.</p>
       <button id="optionsDone" class="btn btn-go">Done</button>
     </div>
   </div>

@@ -563,3 +563,17 @@ input:focus { border-color: var(--wood); }
 .step-btn:disabled { opacity: .35; cursor: default; }
 .step-value { min-width: 28px; text-align: center; font-size: 22px; font-weight: 700; }
 #optionsPanel .hint { margin: 8px 0 12px; }
+
+/* Landscape phones: crew list in two columns so a full room (6) still fits */
+@media (max-height: 430px) {
+  #lobby .player-list { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  #lobby .player-list li { margin: 0; padding: 4px 8px; font-size: 14px; gap: 6px; min-width: 0; }
+  #lobby .player-list li > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #lobby .player-list .tag { font-size: 11px; white-space: nowrap; }
+  #lobby .dot { width: 14px; height: 14px; }
+}
+.tag .tag-short { display: none; }
+@media (max-height: 430px) {
+  #lobby .tag .tag-long { display: none; }
+  #lobby .tag .tag-short { display: inline; font-size: 14px; }
+}

@@ -3,6 +3,7 @@ const physics = require('../shared/physics');
 const tasksDef = require('../shared/tasks');
 const pickupsDef = require('../shared/pickups');
 const { assign, pickTypes } = require('./taskAssign');
+const bots = require('./bots');
 
 const MAX_PLAYERS = 6;
 const COUNTDOWN_MS = 3000;
@@ -66,27 +67,51 @@ class Room {
     this.nextKeyAt = 0;
     this.lastStatus = '';
     // Options the room creator can change in the lobby
-    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS };
+    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS, botCount: 0 };
+    this.botSeq = 0;
+  }
+
+  humans() {
+    return [...this.players.values()].filter(p => !p.isBot);
+  }
+
+  // Keep the number of bots in line with the Captain's choice, leaving seats free for people.
+  syncBots() {
+    if (this.state !== 'lobby') return;
+    const want = Math.max(0, Math.min(this.options.botCount, MAX_PLAYERS - this.humans().length));
+    const have = [...this.players.values()].filter(p => p.isBot);
+    for (const b of have.slice(want)) this.players.delete(b.id);
+    for (let i = have.length; i < want; i++) {
+      const used = new Set([...this.players.values()].map(p => p.name));
+      const name = bots.NAMES.map(n => '🤖 ' + n).find(n => !used.has(n)) || '🤖 Bot ' + (this.botSeq + 1);
+      this.addPlayer('bot-' + ++this.botSeq, null, null, name, true);
+    }
   }
 
   joinError() {
     if (this.state !== 'lobby') return 'That game has already started.';
-    if (this.players.size >= MAX_PLAYERS) return 'That room is full.';
+    // Bots step aside for people, so only count humans here.
+    if (this.humans().length >= MAX_PLAYERS) return 'That room is full.';
     return null;
   }
 
   // id: stable player id (survives reconnects). socketId: the current connection. token: secret used to rejoin.
-  addPlayer(id, socketId, token, name) {
+  addPlayer(id, socketId, token, name, isBot = false) {
     const used = new Set([...this.players.values()].map(p => p.color));
     const color = COLORS.find(c => !used.has(c));
     const p = {
-      id, socketId, token, connected: true, dropTimer: null,
+      id, socketId, token, isBot, connected: true, dropTimer: null,
       name, color, x: map.spawn.x, y: map.spawn.y, budget: BUDGET_CAP, lastMoveAt: 0, tasks: [],
     };
     this.resetPlayer(p);
+    if (!isBot && this.humans().length + [...this.players.values()].filter(q => q.isBot).length >= MAX_PLAYERS) {
+      // Room is full of bots: one of them gives up its seat.
+      const bot = [...this.players.values()].reverse().find(q => q.isBot);
+      if (bot) this.players.delete(bot.id);
+    }
     this.players.set(id, p);
-    if (!this.hostId) this.hostId = id;
-    this.broadcast();
+    if (!this.hostId && !isBot) this.hostId = id;
+    if (!isBot) this.broadcast();
   }
 
   // Clears everything that belongs to a single match.
@@ -106,6 +131,7 @@ class Room {
     p.keyTrips = 0;
     p.inHatch = null;
     p.hatchAt = 0;
+    if (p.isBot) bots.resetBrain(p);
   }
 
   removePlayer(id) {
@@ -113,14 +139,17 @@ class Room {
     if (!p) return;
     clearTimeout(p.dropTimer);
     this.players.delete(id);
+    const humans = this.humans();
     if (this.hostId === id) {
-      const list = [...this.players.values()];
-      this.hostId = (list.find(q => q.connected) || list[0] || {}).id || null;
+      this.hostId = (humans.find(q => q.connected) || humans[0] || {}).id || null;
     }
-    if (this.players.size === 0) {
+    if (humans.length === 0) {
+      // Only bots left: close the room.
+      this.players.clear();
       this.stopTimers();
       if (this.onEmpty) this.onEmpty();
     } else {
+      this.syncBots(); // a freed seat can go back to a bot
       this.broadcast();
     }
   }
@@ -165,7 +194,7 @@ class Room {
   }
 
   isEmpty() {
-    return this.players.size === 0;
+    return this.humans().length === 0;
   }
 
   setOption(byId, key, value) {
@@ -174,16 +203,23 @@ class Room {
     const valid = {
       taskArrows: v => typeof v === 'boolean',
       taskCount: v => Number.isInteger(v) && v >= tasksDef.MIN_TASKS && v <= tasksDef.MAX_TASKS,
+      botCount: v => Number.isInteger(v) && v >= 0 && v <= MAX_PLAYERS - 1,
     };
     if (!valid[key] || !valid[key](value)) return;
     this.options[key] = value;
+    if (key === 'botCount') this.syncBots();
     this.broadcast();
   }
 
   setColor(id, color) {
     const p = this.players.get(id);
     if (!p || this.state !== 'lobby' || !COLORS.includes(color)) return;
-    for (const other of this.players.values()) if (other.id !== id && other.color === color) return;
+    const owner = [...this.players.values()].find(o => o.id !== id && o.color === color);
+    if (owner && !owner.isBot) return;
+    if (owner) {
+      const used = new Set([...this.players.values()].map(o => o.color));
+      owner.color = COLORS.find(c => !used.has(c)) || p.color;
+    }
     p.color = color;
     this.broadcast();
   }
@@ -238,6 +274,7 @@ class Room {
       p.tasks = [];
       this.resetPlayer(p);
     }
+    this.syncBots(); // seats freed during the game go back to bots
     this.broadcast();
   }
 
@@ -275,6 +312,9 @@ class Room {
           this.exitHatch(p.id);
           this.toPlayer(p, 'notice', { text: 'Too long in the hatch, you got pushed out!' });
         }
+      }
+      for (const p of this.players.values()) {
+        if (p.isBot && this.state === 'playing') bots.update(this, p, TICK_MS / 1000, now);
       }
       // Re-send the room when anyone's status icons change (e.g. slime wore off).
       const status = JSON.stringify([...this.players.values()].map(p => this.statusOf(p, now)));
@@ -658,7 +698,7 @@ class Room {
       options: this.options,
       taskCount: this.options.taskCount,
       players: players.map(p => ({
-        id: p.id, name: p.name, color: p.color, x: p.x, y: p.y, connected: p.connected,
+        id: p.id, name: p.name, color: p.color, x: p.x, y: p.y, connected: p.connected, isBot: !!p.isBot,
         done: this.doneCount(p),
         status: this.statusOf(p, now),
         // Why each sabotage can't target this player (for the target picker).
