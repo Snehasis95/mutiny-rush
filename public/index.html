@@ -60,6 +60,7 @@
         <div>
           <h2>Crew <span id="crewCount" class="muted"></span></h2>
           <ul id="playerList" class="player-list"></ul>
+          <div id="crews" class="crews hidden"></div>
         </div>
         <div>
           <div class="color-head">
@@ -236,6 +237,13 @@
       <div class="panel-head">
         <h2>⚙️ Game options</h2>
         <button id="optionsClose" class="btn-icon dark" aria-label="Close">✕</button>
+      </div>
+      <div class="toggle stepper-row level-row">
+        <span>👥 Mode</span>
+        <div class="segmented" role="radiogroup" aria-label="Game mode">
+          <button class="seg-btn" data-mode="solo" role="radio">Solo race</button>
+          <button class="seg-btn" data-mode="team" role="radio">Teams</button>
+        </div>
       </div>
       <div class="toggle-pair">
         <label class="toggle"><span>🎯 Arrows</span><input type="checkbox" data-option="taskArrows"><i></i></label>

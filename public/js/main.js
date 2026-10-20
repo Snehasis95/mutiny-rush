@@ -30,6 +30,10 @@
   const SEND_MS = 50;
   const MAX_PIRATES = 6; // people + bots in one room
   const BOT_LEVELS = { easy: 'Easy', normal: 'Normal', hard: 'Hard' };
+  const TEAMS = { red: { name: 'Red Crew', icon: '🔴', color: '#e74c3c' }, blue: { name: 'Blue Crew', icon: '🔵', color: '#3498db' } };
+  const isTeamGame = () => S.room && S.room.options.mode === 'team';
+  const myTeam = () => { const me = S.room && S.room.players.find(p => p.id === S.myId); return me ? me.team : null; };
+  const nameById = id => { const p = S.room && S.room.players.find(q => q.id === id); return p ? p.name : 'Someone'; };
   const INTERP_MS = 110; // render other players this far in the past for smoothness
 
   const S = {
@@ -176,6 +180,8 @@
       return li;
     }));
 
+    renderCrews(room, isHost);
+
     const me = room.players.find(p => p.id === S.myId);
     const taken = new Set(room.players.filter(p => p.id !== S.myId).map(p => p.color));
     $('#colorGrid').replaceChildren(...room.colors.map(c => {
@@ -195,10 +201,63 @@
     const o = room.options;
     const botsHere = room.players.filter(p => p.isBot).length; // real number (bots give up seats to people)
     const botText = botsHere ? `🤖 ${botsHere} ${BOT_LEVELS[o.botLevel]} bot${botsHere === 1 ? '' : 's'}` : '🤖 No bots';
-    $('#optionsSummary').textContent = `🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 🌊 Events ${o.events ? 'on' : 'off'} · 📋 ${o.taskCount} tasks · ${botText}`;
+    const modeText = o.mode === 'team' ? '👥 Teams' : '🏁 Solo';
+    $('#optionsSummary').textContent = `${modeText} · 🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 🌊 Events ${o.events ? 'on' : 'off'} · 📋 ${o.taskCount} tasks${o.mode === 'team' ? ' each' : ''} · ${botText}`;
     $('#optionsNote').textContent = isHost ? '' : 'Set by the Captain';
     $('#optionsBtn').classList.toggle('hidden', !isHost);
     renderOptionsPanel();
+  }
+
+  // ---------- crews (team mode) ----------
+  function renderCrews(room, isHost) {
+    const team = room.options.mode === 'team';
+    $('#playerList').classList.toggle('hidden', team);
+    $('#crews').classList.toggle('hidden', !team);
+    if (!team) return;
+    const mine = myTeam();
+    const cols = Object.entries(TEAMS).map(([id, info]) => {
+      const members = room.players.filter(p => p.team === id);
+      const box = document.createElement('div');
+      box.className = 'crew-box crew-' + id + (mine === id ? ' mine' : '');
+      const head = document.createElement('div');
+      head.className = 'crew-head';
+      const title = document.createElement('span');
+      title.textContent = `${info.icon} ${info.name} (${members.length}/3)`;
+      head.appendChild(title);
+      if (mine !== id) {
+        const join = document.createElement('button');
+        join.className = 'btn btn-small crew-join';
+        join.textContent = 'Join';
+        join.disabled = members.length >= 3 && !members.some(m => m.isBot);
+        join.addEventListener('click', () => socket.emit('setTeam', id));
+        head.appendChild(join);
+      }
+      const ul = document.createElement('ul');
+      ul.className = 'crew-list';
+      for (const p of members) {
+        const li = document.createElement('li');
+        if (p.id === S.myId) li.className = 'me';
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.background = p.color;
+        const nm = document.createElement('span');
+        nm.className = 'crew-name';
+        nm.textContent = p.name + (p.id === room.hostId ? ' 👑' : '') + (p.parrot ? ' 🦜' : '');
+        li.append(dot, nm);
+        ul.appendChild(li);
+      }
+      box.append(head, ul);
+      return box;
+    });
+    const nodes = [...cols];
+    if (isHost) {
+      const sh = document.createElement('button');
+      sh.className = 'btn btn-small crew-shuffle';
+      sh.textContent = '🔀 Shuffle crews';
+      sh.addEventListener('click', () => socket.emit('shuffleTeams'));
+      nodes.push(sh);
+    }
+    $('#crews').replaceChildren(...nodes);
   }
 
   // ---------- your look (hat + face) ----------
@@ -282,7 +341,12 @@
     $('#botCountValue').textContent = botsHere;
     $('#botCountDown').disabled = botsHere <= 0;
     $('#botCountUp').disabled = botsHere >= MAX_PIRATES - humans;
-    optionsPanel.querySelectorAll('.seg-btn').forEach(btn => {
+    optionsPanel.querySelectorAll('.seg-btn[data-mode]').forEach(btn => {
+      const on = btn.dataset.mode === o.mode;
+      btn.classList.toggle('on', on);
+      btn.setAttribute('aria-checked', String(on));
+    });
+    optionsPanel.querySelectorAll('.seg-btn[data-level]').forEach(btn => {
       const on = btn.dataset.level === o.botLevel;
       btn.classList.toggle('on', on);
       btn.setAttribute('aria-checked', String(on));
@@ -318,7 +382,8 @@
     if (n !== botsHere) setOption('botCount', n);
   };
   $('#botCountDown').addEventListener('click', () => stepBots(-1));
-  optionsPanel.querySelectorAll('.seg-btn').forEach(btn => btn.addEventListener('click', () => setOption('botLevel', btn.dataset.level)));
+  optionsPanel.querySelectorAll('.seg-btn[data-level]').forEach(btn => btn.addEventListener('click', () => setOption('botLevel', btn.dataset.level)));
+  optionsPanel.querySelectorAll('.seg-btn[data-mode]').forEach(btn => btn.addEventListener('click', () => setOption('mode', btn.dataset.mode)));
   $('#botCountUp').addEventListener('click', () => stepBots(1));
 
   $('#startBtn').addEventListener('click', () => {
@@ -454,7 +519,9 @@
     $('#menuRoom').textContent = `· room ${room.code}`;
     $('#lobbyBtn').classList.toggle('hidden', room.hostId !== S.myId);
     // Red dot on 🏆 when a rival is one task from winning.
-    const close = room.players.some(p => p.id !== S.myId && p.done >= room.taskCount - 1);
+    const close = room.teams
+      ? Object.entries(room.teams).some(([t, v]) => t !== myTeam() && v.total && v.done >= v.total - 1)
+      : room.players.some(p => p.id !== S.myId && p.done >= room.taskCount - 1);
     $('#playersBadge').classList.toggle('hidden', !close);
     if (!$('#playersPanel').classList.contains('hidden')) renderRankList($('#playersList'));
     if (!$('#picker').classList.contains('hidden')) renderPicker();
@@ -475,7 +542,11 @@
       const area = document.createElement('span');
       area.className = 'area';
       const lockLeft = Math.ceil((t.lockedUntil - now) / 1000);
-      area.textContent = !t.done && lockLeft > 0 ? ` · ⚓ ${lockLeft}s` : ` · ${t.area}`;
+      let where = ` · ${t.area}`;
+      if (!t.done && lockLeft > 0) where = ` · ⚓ ${lockLeft}s`;
+      else if (isTeamGame() && t.done && t.doneBy) where = ` · ${t.doneBy === S.myId ? 'you' : nameById(t.doneBy)}`;
+      else if (isTeamGame() && t.busyBy && t.busyBy !== S.myId) where = ` · ⏳ ${nameById(t.busyBy)}`;
+      area.textContent = where;
       li.append(`${t.done ? '✔' : info.icon} ${info.name}`, area);
       return li;
     }));
@@ -488,18 +559,51 @@
 
   // ---------- players panel (🏆) and results ----------
   function rankedPlayers() {
+    if (S.room.teams) {
+      // Crews: winning/leading crew first, then by name
+      const score = t => (t === S.room.winnerTeam ? 1e6 : 0) + (S.room.teams[t] ? S.room.teams[t].done : 0);
+      return S.room.players.slice().sort((a, b) => score(b.team) - score(a.team) || (a.team < b.team ? -1 : 1));
+    }
     return S.room.players.slice().sort((a, b) =>
       (b.id === S.room.winnerId) - (a.id === S.room.winnerId) || b.done - a.done);
   }
 
+  function crewScoreboard() {
+    const div = document.createElement('div');
+    div.className = 'scoreboard';
+    for (const [t, info] of Object.entries(TEAMS)) {
+      const v = S.room.teams[t] || { done: 0, total: 0 };
+      const row = document.createElement('div');
+      row.className = 'score-row' + (t === myTeam() ? ' mine' : '');
+      const label = document.createElement('span');
+      label.textContent = `${info.icon} ${info.name}`;
+      const bar = document.createElement('span');
+      bar.className = 'bar';
+      const fill = document.createElement('i');
+      fill.style.width = `${v.total ? (v.done / v.total) * 100 : 0}%`;
+      fill.style.background = info.color;
+      bar.appendChild(fill);
+      const n = document.createElement('span');
+      n.className = 'count';
+      n.textContent = `${v.done}/${v.total}`;
+      row.append(label, bar, n);
+      div.appendChild(row);
+    }
+    return div;
+  }
+
   function renderRankList(ul) {
     const total = S.room.taskCount;
+    const teams = S.room.teams;
+    const board = ul.previousElementSibling && ul.previousElementSibling.classList.contains('scoreboard') ? ul.previousElementSibling : null;
+    if (board) board.remove();
+    if (teams) ul.before(crewScoreboard());
     ul.replaceChildren(...rankedPlayers().map((p, i) => {
       const li = document.createElement('li');
       if (p.id === S.myId) li.className = 'me';
       const rank = document.createElement('span');
       rank.className = 'rank';
-      rank.textContent = `${i + 1}.`;
+      rank.textContent = teams ? (TEAMS[p.team] || {}).icon || '' : `${i + 1}.`;
       const dot = document.createElement('span');
       dot.className = 'dot';
       dot.style.background = p.color;
@@ -515,11 +619,13 @@
       const bar = document.createElement('span');
       bar.className = 'bar';
       const fill = document.createElement('i');
-      fill.style.width = `${(p.done / total) * 100}%`;
+      const tTotal = teams && teams[p.team] ? teams[p.team].total : total;
+      fill.style.width = `${tTotal ? (p.done / tTotal) * 100 : 0}%`;
+      if (teams && TEAMS[p.team]) fill.style.background = TEAMS[p.team].color;
       bar.appendChild(fill);
       const count = document.createElement('span');
       count.className = 'count';
-      count.textContent = `${p.done}/${total}`;
+      count.textContent = `${p.done}/${tTotal}`;
       li.append(rank, dot, name, bar, count);
       return li;
     }));
@@ -573,21 +679,28 @@
     closeMinigame(false);
     for (const id of ['#menu', '#playersPanel', '#picker', '#hatchPanel', '#mapPanel']) $(id).classList.add('hidden');
     const winner = S.room.players.find(p => p.id === S.room.winnerId);
-    $('#winnerText').textContent = winner
-      ? (winner.id === S.myId ? 'You are the new Captain!' : `${winner.name} is the new Captain!`)
-      : 'Game over!';
-    $('#parrotText').textContent = winner
-      ? (winner.id === S.myId ? '🦜 The parrot is yours until someone beats you!' : `🦜 ${winner.name} gets the Captain's parrot`)
-      : '';
+    const wt = S.room.winnerTeam && TEAMS[S.room.winnerTeam];
+    const iWon = wt ? S.room.winnerTeam === myTeam() : winner && winner.id === S.myId;
+    if (wt) {
+      $('#winnerText').textContent = `${wt.icon} The ${wt.name} wins!`;
+      $('#parrotText').textContent = iWon ? '🦜 A parrot for you and every crewmate!' : `🦜 Parrots for the whole ${wt.name}`;
+    } else {
+      $('#winnerText').textContent = winner
+        ? (winner.id === S.myId ? 'You are the new Captain!' : `${winner.name} is the new Captain!`)
+        : 'Game over!';
+      $('#parrotText').textContent = winner
+        ? (winner.id === S.myId ? '🦜 The parrot is yours until someone beats you!' : `🦜 ${winner.name} gets the Captain's parrot`)
+        : '';
+    }
     renderRankList($('#resultsList'));
     const isHost = S.room.hostId === S.myId;
     $('#againBtn').classList.toggle('hidden', !isHost);
     $('#againWait').classList.toggle('hidden', isHost);
     $('#results').classList.remove('hidden');
     MR.Render.confetti(canvas.clientWidth);
-    MR.vibrate(winner && winner.id === S.myId ? [80, 60, 160] : 60);
+    MR.vibrate(iWon ? [80, 60, 160] : 60);
     MR.Sfx.stopAmbient();
-    if (winner && winner.id === S.myId) MR.Sfx.fanfare();
+    if (iWon) MR.Sfx.fanfare();
     else MR.Sfx.splash();
   }
 
@@ -608,7 +721,7 @@
     }
     let best = null, bestD = TASKS.USE_DIST;
     for (const t of S.tasks) {
-      if (t.done) continue;
+      if (t.done || (t.busyBy && t.busyBy !== S.myId)) continue;
       const d = dist(t);
       if (d <= bestD) { best = t; bestD = d; }
     }
@@ -636,15 +749,15 @@
     }
     if (a.kind === 'task') {
       const t = a.task;
-      S.mg = { type: t.type, cleanup: null, pending: true };
-      socket.emit('startTask', t.type, res => {
-        if (!S.mg || S.mg.type !== t.type) return;
+      S.mg = { type: t.type, taskId: t.id, cleanup: null, pending: true };
+      socket.emit('startTask', t.id, res => {
+        if (!S.mg || S.mg.taskId !== t.id) return;
         if (!res.ok) {
           S.mg = null;
           toast(res.error);
           return;
         }
-        openMinigame(t.type, res.scramble);
+        openMinigame(t.type, res.scramble, t.id);
       });
       return;
     }
@@ -666,7 +779,7 @@
     }
   }
 
-  function openMinigame(type, scramble) {
+  function openMinigame(type, scramble, taskId) {
     const info = typeInfo.get(type);
     const stage = $('#mgStage');
     stage.replaceChildren();
@@ -678,14 +791,14 @@
       stage,
       scramble: !!scramble,
       hint: text => { $('#mgHint').textContent = (scramble ? '🦜 Scrambled! ' : '') + text; },
-      done: () => finishMinigame(type),
+      done: () => finishMinigame(taskId),
     };
-    S.mg = { type, cleanup: MR.Minigames[type](ctx), pending: false };
+    S.mg = { type, taskId, cleanup: MR.Minigames[type](ctx), pending: false };
   }
 
-  function finishMinigame(type) {
-    if (!S.mg || S.mg.type !== type) return;
-    socket.emit('completeTask', type, res => {
+  function finishMinigame(taskId) {
+    if (!S.mg || S.mg.taskId !== taskId) return;
+    socket.emit('completeTask', taskId, res => {
       if (!res.ok) toast(res.error);
     });
     closeMinigame(false);
@@ -746,13 +859,14 @@
     $('#pickerTitle').textContent = `${it.icon} ${it.name}: pick a rival`;
     $('#pickerDesc').textContent = it.desc;
     const rivals = S.room.players.filter(p => p.id !== S.myId);
+    const crew = myTeam();
     const list = $('#pickerList');
     if (!rivals.length) {
       list.replaceChildren(Object.assign(document.createElement('p'), { className: 'hint', textContent: 'No rivals on board!' }));
       return;
     }
     list.replaceChildren(...rivals.map(p => {
-      const why = p.blocked && p.blocked[it.id];
+      const why = (isTeamGame() && crew && p.team === crew && 'Crewmate') || (p.blocked && p.blocked[it.id]);
       const b = document.createElement('button');
       b.className = 'target';
       b.disabled = !!why;
@@ -922,17 +1036,18 @@
   });
 
   socket.on('tasks', list => {
-    const before = new Map(S.tasks.map(t => [t.type, t.done]));
+    const before = new Map(S.tasks.map(t => [t.id, t.done]));
     const now = performance.now();
     const tasks = list.map(t => ({ ...t, lockedUntil: t.lockedMs ? now + t.lockedMs : 0 }));
     S.tasks = tasks;
     for (const t of tasks) {
-      if (t.done && before.get(t.type) === false) {
+      if (t.done && before.get(t.id) === false) {
         MR.Render.burst(t.x, t.y - 20);
         MR.Sfx.good();
         MR.vibrate(40);
         const left = tasks.filter(tk => !tk.done).length;
-        if (left) toast(`✔ ${typeInfo.get(t.type).name} done! ${left} to go.`, 1800);
+        const who = t.doneBy && t.doneBy !== S.myId ? `${nameById(t.doneBy)}: ` : '';
+        if (left) toast(`✔ ${who}${typeInfo.get(t.type).name} done! ${left} to go.`, 1800);
       }
     }
     renderTaskList();
@@ -1268,19 +1383,22 @@
       const players = [];
       const meInfo = byId.get(S.myId);
       if (meInfo && !S.my.inHatch) {
-        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, hat: meInfo.hat, eyes: meInfo.eyes, parrot: meInfo.parrot, isMe: true });
+        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, hat: meInfo.hat, eyes: meInfo.eyes, parrot: meInfo.parrot, team: meInfo.team, isMe: true });
       }
       for (const [id, o] of S.others) {
         const info = byId.get(id);
         if (info && !o.hidden) {
-          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status, hat: info.hat, eyes: info.eyes, parrot: info.parrot });
+          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status, hat: info.hat, eyes: info.eyes, parrot: info.parrot, team: info.team });
         }
       }
       const playing = S.room.state === 'playing';
       const open = S.tasks.filter(t => !t.done).map(t => {
         const lockedLeft = Math.ceil((t.lockedUntil - now) / 1000);
-        return { ...t, icon: typeInfo.get(t.type).icon, locked: lockedLeft > 0, lockedLeft };
+        return { ...t, icon: typeInfo.get(t.type).icon, locked: lockedLeft > 0, lockedLeft, busy: !!(t.busyBy && t.busyBy !== S.myId) };
       });
+      const arrowTasks = open.filter(t => !t.busy)
+        .sort((a, b) => Math.hypot(a.x - S.me.x, a.y - S.me.y) - Math.hypot(b.x - S.me.x, b.y - S.me.y))
+        .slice(0, 6);
       MR.Render.draw(canvas, {
         dpr, dt, me: S.me, players, time: now / 1000,
         sway: MR.Settings.get('sway'),
@@ -1292,6 +1410,7 @@
         storm: playing && now < S.my.stormUntil,
         shipEvent: playing ? S.event : null,
         showArrows: playing && !S.my.inHatch && S.room.options.taskArrows,
+        arrowTasks,
         showJoystick: playing && !S.mg && !S.my.inHatch,
       });
       updateUseButton();

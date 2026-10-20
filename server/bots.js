@@ -161,7 +161,11 @@ function resetPath(p) {
 
 // Where should this bot go next? The nearest open task, or a barrel that's close by.
 function chooseGoal(room, p, now) {
-  const tasks = p.tasks.filter(t => !t.done && now >= t.lockedUntil);
+  // Tasks a crewmate bot is already walking to are left for them.
+  const claimed = new Set([...room.players.values()]
+    .filter(q => q !== p && q.isBot && q.brain && q.brain.goal && q.brain.goal.kind === 'task' && q.tasks === p.tasks)
+    .map(q => q.brain.goal.id));
+  const tasks = p.tasks.filter(t => !t.done && now >= t.lockedUntil && !claimed.has(t.id) && (!t.busyBy || t.busyBy === p.id));
   const nearestTask = tasks.sort((a, b) => dist(p, a) - dist(p, b))[0];
   if (!p.pickup) {
     const barrel = room.barrels
@@ -172,7 +176,7 @@ function chooseGoal(room, p, now) {
       return { kind: 'barrel', id: barrel.id, x: barrel.x, y: barrel.y };
     }
   }
-  if (nearestTask) return { kind: 'task', type: nearestTask.type, x: nearestTask.x, y: nearestTask.y };
+  if (nearestTask) return { kind: 'task', id: nearestTask.id, type: nearestTask.type, x: nearestTask.x, y: nearestTask.y };
   // Every task is anchored: drift towards the middle and wait.
   return { kind: 'wait', x: map.spawn.x + rand(-150, 150), y: map.spawn.y + rand(-80, 80) };
 }
@@ -180,8 +184,8 @@ function chooseGoal(room, p, now) {
 function goalStillValid(room, p, g, now) {
   if (g.kind === 'barrel') return !p.pickup && room.barrels.some(b => b.id === g.id);
   if (g.kind === 'task') {
-    const t = p.tasks.find(tk => tk.type === g.type);
-    return t && !t.done && now >= t.lockedUntil;
+    const t = p.tasks.find(tk => tk.id === g.id);
+    return t && !t.done && now >= t.lockedUntil && (!t.busyBy || t.busyBy === p.id);
   }
   return false;
 }
@@ -192,7 +196,7 @@ function useItem(room, p, now) {
   if (!it || it.target === 'passive') return true;
   if (it.target !== 'player') return room.usePickup(p.id) === null;
   const targets = [...room.players.values()]
-    .filter(q => q !== p && !room.targetError(q, it.id, now))
+    .filter(q => q !== p && !room.sameTeam(p, q) && !room.targetError(q, it.id, now))
     .sort((a, b) => room.doneCount(b) - room.doneCount(a));
   if (!targets.length) return false;
   const pick = Math.random() < levelOf(room).leaderChance ? targets[0] : targets[Math.floor(Math.random() * targets.length)];
@@ -216,7 +220,7 @@ function update(room, p, dt, now) {
   // Busy with a task: "play" it for a while, then finish.
   if (p.activeTask) {
     if (now >= b.taskUntil) {
-      room.completeTask(p.id, p.activeTask.type);
+      room.completeTask(p.id, p.activeTask.taskId);
       b.goal = null;
       b.restUntil = now + rand(...lv.pause);
     }
@@ -234,7 +238,7 @@ function update(room, p, dt, now) {
   const reach = g.kind === 'task' ? tasksDef.USE_DIST - 25 : g.kind === 'barrel' ? pickupsDef.GRAB_DIST - 15 : 30;
   if (dist(p, g) <= reach) {
     if (g.kind === 'task') {
-      const res = room.startTask(p.id, g.type);
+      const res = room.startTask(p.id, g.id);
       if (!res.error) {
         // Bots take a believable amount of time; scrambled tasks take longer.
         const base = typeById.get(g.type).minMs;

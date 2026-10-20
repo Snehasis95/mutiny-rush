@@ -8,6 +8,8 @@ const eventsDef = require('../shared/events');
 const looks = require('../shared/looks');
 
 const MAX_PLAYERS = 6;
+const TEAMS = ['red', 'blue'];
+const TEAM_MAX = 3;
 const COUNTDOWN_MS = 3000;
 const TICK_MS = 50; // 20 updates per second
 const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#e67e22', '#9b59b6', '#ff6fae', '#1abc9c'];
@@ -60,6 +62,8 @@ class Room {
     this.hostId = null;
     this.state = 'lobby'; // lobby | countdown | playing | ended
     this.winnerId = null;
+    this.winnerTeam = null;
+    this.teamTasks = null; // team mode: { red: [...], blue: [...] } shared by teammates
     this.countdownTimer = null;
     this.countdownEndsAt = 0;
     this.tickTimer = null;
@@ -70,7 +74,7 @@ class Room {
     this.nextKeyAt = 0;
     this.lastStatus = '';
     // Options the room creator can change in the lobby
-    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS, botCount: 0, botLevel: 'normal', events: true };
+    this.options = { taskArrows: true, taskCount: tasksDef.DEFAULT_TASKS, botCount: 0, botLevel: 'normal', events: true, mode: 'solo' };
     this.botSeq = 0;
     // Random ship events
     this.event = null;      // { id, phase: 'warning' | 'active', startsAt, endsAt, data }
@@ -81,6 +85,71 @@ class Room {
 
   humans() {
     return [...this.players.values()].filter(p => !p.isBot);
+  }
+
+  // ---------------- teams ----------------
+
+  teamMode() {
+    return this.options.mode === 'team';
+  }
+
+  teamMembers(team) {
+    return [...this.players.values()].filter(p => p.team === team);
+  }
+
+  // The team with fewer pirates (red on a tie).
+  smallerTeam() {
+    return TEAMS.slice().sort((a, b) => this.teamMembers(a).length - this.teamMembers(b).length)[0];
+  }
+
+  sameTeam(a, b) {
+    return this.teamMode() && a.team && a.team === b.team;
+  }
+
+  // Split everyone as evenly as possible (people first, so bots fill the gaps).
+  balanceTeams(shuffle = false) {
+    let list = [...this.players.values()];
+    if (shuffle) {
+      for (let i = list.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [list[i], list[j]] = [list[j], list[i]];
+      }
+    }
+    list = list.filter(p => !p.isBot).concat(list.filter(p => p.isBot));
+    for (const p of list) p.team = null;
+    list.forEach((p, i) => { p.team = TEAMS[i % 2]; });
+  }
+
+  setTeam(id, team) {
+    const p = this.players.get(id);
+    if (!p || this.state !== 'lobby' || !this.teamMode() || !TEAMS.includes(team) || p.team === team) return;
+    if (this.teamMembers(team).length >= TEAM_MAX) {
+      // Full team: swap places with one of its bots if there is one.
+      const bot = this.teamMembers(team).find(q => q.isBot);
+      if (!bot) return;
+      bot.team = p.team;
+    }
+    p.team = team;
+    this.broadcast();
+  }
+
+  shuffleTeams(byId) {
+    if (byId !== this.hostId || this.state !== 'lobby' || !this.teamMode()) return;
+    this.balanceTeams(true);
+    this.broadcast();
+  }
+
+  // The tasks this player can work on: their own (solo) or their crew's (teams).
+  taskById(p, key) {
+    return p.tasks.find(t => t.id === key) || (!this.teamMode() && p.tasks.find(t => t.type === key)) || null;
+  }
+
+  // Someone stops doing a task (finished, cancelled, knocked out...): free it for teammates.
+  clearActive(p) {
+    if (!p.activeTask) return;
+    const t = p.tasks.find(tk => tk.id === p.activeTask.taskId);
+    if (t && t.busyBy === p.id) t.busyBy = null;
+    p.activeTask = null;
   }
 
   // Keep the number of bots in line with the Captain's choice, leaving seats free for people.
@@ -112,6 +181,7 @@ class Room {
       name, color, x: map.spawn.x, y: map.spawn.y, budget: BUDGET_CAP, lastMoveAt: 0, tasks: [],
       ...looks.clean(look),
       parrot: false, // 🦜 the last winner in this room
+      team: null,
     };
     this.resetPlayer(p);
     if (!isBot && this.humans().length + [...this.players.values()].filter(q => q.isBot).length >= MAX_PLAYERS) {
@@ -119,6 +189,7 @@ class Room {
       const bot = [...this.players.values()].reverse().find(q => q.isBot);
       if (bot) this.players.delete(bot.id);
     }
+    if (this.teamMode()) p.team = this.smallerTeam();
     this.players.set(id, p);
     if (!this.hostId && !isBot) this.hostId = id;
     if (!isBot) this.broadcast();
@@ -174,7 +245,7 @@ class Room {
     if (!p || p.socketId !== socketId) return; // an older connection; the player already moved on
     p.connected = false;
     p.socketId = null;
-    p.activeTask = null;
+    this.clearActive(p);
     if (p.inHatch) this.exitHatch(id);
     clearTimeout(p.dropTimer);
     p.dropTimer = setTimeout(() => this.removePlayer(id), RECONNECT_GRACE_MS);
@@ -217,10 +288,15 @@ class Room {
       botCount: v => Number.isInteger(v) && v >= 0 && v <= MAX_PLAYERS - 1,
       botLevel: v => bots.LEVEL_IDS.includes(v),
       events: v => typeof v === 'boolean',
+      mode: v => v === 'solo' || v === 'team',
     };
     if (!valid[key] || !valid[key](value)) return;
     this.options[key] = value;
     if (key === 'botCount') this.syncBots();
+    if (key === 'mode') {
+      if (value === 'team') this.balanceTeams();
+      else for (const p of this.players.values()) p.team = null;
+    }
     this.broadcast();
   }
 
@@ -249,19 +325,32 @@ class Room {
   start(byId) {
     if (byId !== this.hostId || this.state !== 'lobby') return;
     const list = [...this.players.values()];
+    if (this.teamMode() && TEAMS.some(t => !this.teamMembers(t).length)) {
+      const host = this.players.get(byId);
+      this.toPlayer(host, 'notice', { text: 'Each crew needs at least one pirate (add a bot or move someone).' });
+      return;
+    }
     // Same random set of task types for everyone this round.
     const assigned = assign(list.length, pickTypes(this.options.taskCount));
+    const makeTask = (s, owner) => ({
+      id: `${owner}:${s.type}`, type: s.type, stationId: s.id, x: s.x, y: s.y, area: areaAt(s.x, s.y).name,
+      done: false, lockedUntil: 0, busyBy: null, doneBy: null,
+    });
+    this.teamTasks = this.teamMode() ? { red: [], blue: [] } : null;
     list.forEach((p, i) => {
       const a = (i / list.length) * Math.PI * 2 - Math.PI / 2;
       p.x = map.spawn.x + Math.cos(a) * map.spawn.r;
       p.y = map.spawn.y + Math.sin(a) * map.spawn.r;
       p.budget = BUDGET_CAP;
       this.resetPlayer(p);
-      p.tasks = assigned[i].map(s => ({
-        type: s.type, stationId: s.id, x: s.x, y: s.y, area: areaAt(s.x, s.y).name, done: false, lockedUntil: 0,
-      }));
+      const mine = assigned[i].map(s => makeTask(s, p.id));
+      if (this.teamTasks) this.teamTasks[p.team].push(...mine);
+      else p.tasks = mine;
     });
+    // Teammates all point at the same shared list (tasks per player x team size).
+    if (this.teamTasks) for (const p of list) p.tasks = this.teamTasks[p.team];
     this.winnerId = null;
+    this.winnerTeam = null;
     this.barrels = [];
     this.state = 'countdown';
     this.broadcast();
@@ -293,6 +382,8 @@ class Room {
     this.clearEvent();
     this.state = 'lobby';
     this.winnerId = null;
+    this.winnerTeam = null;
+    this.teamTasks = null;
     this.barrels = [];
     for (const p of this.players.values()) {
       p.tasks = [];
@@ -305,11 +396,15 @@ class Room {
   end(winnerId) {
     this.stopTimers();
     this.clearEvent();
-    for (const p of this.players.values()) p.parrot = p.id === winnerId;
+    const winner = this.players.get(winnerId);
+    this.winnerTeam = this.teamMode() && winner ? winner.team : null;
+    for (const p of this.players.values()) {
+      p.parrot = this.winnerTeam ? p.team === this.winnerTeam : p.id === winnerId; // 🦜 for every winner
+    }
     this.state = 'ended';
     this.winnerId = winnerId;
     for (const p of this.players.values()) {
-      p.activeTask = null;
+      this.clearActive(p);
       p.inHatch = null;
     }
     this.tick(); // final positions
@@ -406,7 +501,7 @@ class Room {
       // The wave knocks everyone out of their mini-game.
       for (const p of this.players.values()) {
         if (!p.activeTask || p.inHatch) continue;
-        p.activeTask = null;
+        this.clearActive(p);
         this.toPlayer(p, 'interrupt');
       }
     }
@@ -500,8 +595,8 @@ class Room {
 
     // Walking away cancels a task in progress.
     if (p.activeTask) {
-      const t = p.tasks.find(tk => tk.type === p.activeTask.type);
-      if (dist(t, p) > tasksDef.USE_DIST + SLACK) p.activeTask = null;
+      const t = this.taskById(p, p.activeTask.taskId);
+      if (!t || dist(t, p) > tasksDef.USE_DIST + SLACK) this.clearActive(p);
     }
 
     if (Math.hypot(res.x - x, res.y - y) > 4) {
@@ -511,16 +606,22 @@ class Room {
 
   // ---------------- tasks ----------------
 
-  startTask(id, type) {
+  // taskKey: the task's id (a task type also works in solo games).
+  startTask(id, taskKey) {
     const p = this.players.get(id);
     if (!p || this.state !== 'playing') return { error: 'The game is not running.' };
     if (p.inHatch) return { error: 'Climb out of the hatch first.' };
     if (Date.now() < p.netUntil) return { error: NETTED };
-    const t = p.tasks.find(tk => tk.type === type);
+    const t = this.taskById(p, taskKey);
     if (!t || t.done) return { error: 'That task is not available.' };
     if (Date.now() < t.lockedUntil) return { error: '⚓ That task is anchored! Wait for the chain to fall off.' };
     if (dist(t, p) > tasksDef.USE_DIST + SLACK) return { error: 'Get closer to the station.' };
-    p.activeTask = { type, startedAt: Date.now() };
+    const other = t.busyBy && t.busyBy !== id && this.players.get(t.busyBy);
+    if (other && other.activeTask && other.activeTask.taskId === t.id) return { error: `${other.name} is already on it!` };
+    this.clearActive(p);
+    t.busyBy = id;
+    p.activeTask = { taskId: t.id, type: t.type, startedAt: Date.now() };
+    this.sendTeamTasks(p);
     const scramble = p.scramble;
     if (scramble) {
       p.scramble = false;
@@ -529,15 +630,16 @@ class Room {
     return { error: null, scramble };
   }
 
-  completeTask(id, type) {
+  completeTask(id, taskKey) {
     const p = this.players.get(id);
     if (!p || this.state !== 'playing') return 'The game is not running.';
-    if (!p.activeTask || p.activeTask.type !== type) return 'That task was interrupted.';
-    if (Date.now() - p.activeTask.startedAt < typeById.get(type).minMs) return 'Too fast!';
-    const t = p.tasks.find(tk => tk.type === type);
+    const t = this.taskById(p, taskKey);
+    if (!p.activeTask || !t || p.activeTask.taskId !== t.id) return 'That task was interrupted.';
+    if (Date.now() - p.activeTask.startedAt < typeById.get(t.type).minMs) return 'Too fast!';
     t.done = true;
-    p.activeTask = null;
-    this.sendTasks(p);
+    t.doneBy = id;
+    this.clearActive(p);
+    this.sendTeamTasks(p);
     if (p.tasks.every(tk => tk.done)) this.end(p.id);
     else this.broadcast();
     return null;
@@ -545,7 +647,9 @@ class Room {
 
   cancelTask(id) {
     const p = this.players.get(id);
-    if (p) p.activeTask = null;
+    if (!p) return;
+    this.clearActive(p);
+    this.sendTeamTasks(p);
   }
 
   // ---------------- barrels + keys ----------------
@@ -564,8 +668,9 @@ class Room {
   }
 
   rollItem(p) {
-    const leader = Math.max(...[...this.players.values()].map(q => this.doneCount(q)));
-    const weights = leader - this.doneCount(p) >= 2 ? CATCHUP_WEIGHTS : WEIGHTS;
+    const progress = q => (q.tasks.length ? this.doneCount(q) / q.tasks.length : 0);
+    const leader = Math.max(...[...this.players.values()].map(progress));
+    const weights = leader - progress(p) >= 0.3 ? CATCHUP_WEIGHTS : WEIGHTS;
     const total = Object.values(weights).reduce((a, b) => a + b, 0);
     let r = Math.random() * total;
     for (const [id, w] of Object.entries(weights)) {
@@ -634,7 +739,7 @@ class Room {
     if (item.target === 'all') {
       p.pickup = null;
       for (const q of this.players.values()) {
-        if (q === p || this.targetError(q, item.id, now)) continue;
+        if (q === p || this.sameTeam(p, q) || this.targetError(q, item.id, now)) continue;
         // The alarm only bothers rivals who are in the middle of a task.
         if (item.id === 'alarm' && !q.activeTask) continue;
         this.hit(p, q, item.id, now);
@@ -647,6 +752,7 @@ class Room {
 
     const q = this.players.get(targetId);
     if (!q || q === p) return 'Pick a rival.';
+    if (this.sameTeam(p, q)) return "That's your crewmate!";
     const err = this.targetError(q, item.id, now);
     if (err) return err;
     p.pickup = null;
@@ -671,7 +777,8 @@ class Room {
       case 'anchor': {
         const t = pick(q.tasks.filter(tk => !tk.done && now >= tk.lockedUntil));
         t.lockedUntil = now + ANCHOR_MS;
-        this.sendTasks(q);
+        if (t.busyBy) { const b = this.players.get(t.busyBy); if (b) { this.clearActive(b); this.toPlayer(b, 'interrupt'); } }
+        this.sendTeamTasks(q);
         break;
       }
       case 'slime':
@@ -697,13 +804,14 @@ class Room {
       case 'wave': {
         const t = pick(q.tasks.filter(tk => tk.done));
         t.done = false;
-        this.sendTasks(q);
+        t.doneBy = null;
+        this.sendTeamTasks(q);
         break;
       }
     }
     // Getting sabotaged knocks you out of your mini-game (the parrot waits for the next one).
     if (item !== 'parrot' && q.activeTask) {
-      q.activeTask = null;
+      this.clearActive(q);
       this.toPlayer(q, 'interrupt');
     }
     this.sendMe(q);
@@ -725,7 +833,7 @@ class Room {
     if (p.inHatch) return 'Already inside.';
     if (!h || dist(h, p) > pickupsDef.HATCH_DIST + SLACK) return 'Stand on the hatch.';
     if (p.keyTrips <= 0) return 'Your key is worn out.';
-    p.activeTask = null;
+    this.clearActive(p);
     p.inHatch = h.id;
     p.hatchAt = Date.now();
     p.x = h.x;
@@ -799,13 +907,19 @@ class Room {
     this.io.to(this.code).emit('barrels', this.barrels);
   }
 
-  // Each player only learns where their own tasks are. Timers are sent as "ms left".
+  // Each player only learns where their own (or their crew's) tasks are. Timers are sent as "ms left".
   sendTasks(p) {
     const now = Date.now();
     this.toPlayer(p, 'tasks', p.tasks.map(t => ({
-      type: t.type, stationId: t.stationId, x: t.x, y: t.y, area: t.area, done: t.done,
-      lockedMs: Math.max(0, t.lockedUntil - now),
+      id: t.id, type: t.type, stationId: t.stationId, x: t.x, y: t.y, area: t.area, done: t.done,
+      lockedMs: Math.max(0, t.lockedUntil - now), busyBy: t.busyBy, doneBy: t.doneBy,
     })));
+  }
+
+  // Same, for everyone who shares this task list.
+  sendTeamTasks(p) {
+    if (!this.teamMode() || !p.team) return this.sendTasks(p);
+    for (const q of this.teamMembers(p.team)) this.sendTasks(q);
   }
 
   sendMe(p) {
@@ -837,12 +951,17 @@ class Room {
       hostId: this.hostId,
       state: this.state,
       winnerId: this.winnerId,
+      winnerTeam: this.winnerTeam,
+      teams: this.teamMode() ? Object.fromEntries(TEAMS.map(t => {
+        const list = (this.teamTasks && this.teamTasks[t]) || [];
+        return [t, { done: list.filter(x => x.done).length, total: list.length }];
+      })) : null,
       colors: COLORS,
       options: this.options,
       taskCount: this.options.taskCount,
       players: players.map(p => ({
         id: p.id, name: p.name, color: p.color, x: p.x, y: p.y, connected: p.connected, isBot: !!p.isBot,
-        hat: p.hat, eyes: p.eyes, parrot: p.parrot,
+        hat: p.hat, eyes: p.eyes, parrot: p.parrot, team: p.team,
         done: this.doneCount(p),
         status: this.statusOf(p, now),
         // Why each sabotage can't target this player (for the target picker).

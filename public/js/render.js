@@ -483,6 +483,12 @@ MR.Render = (() => {
     // Shadow
     g.fillStyle = 'rgba(0,0,0,.25)';
     g.beginPath(); g.ellipse(p.x, p.y + 26, 24, 8, 0, 0, Math.PI * 2); g.fill();
+    if (p.team) {
+      // Crew ring under the feet (red / blue)
+      g.strokeStyle = p.team === 'red' ? '#ff4d4d' : '#3fa9ff';
+      g.lineWidth = 4;
+      g.beginPath(); g.ellipse(p.x, p.y + 26, 30, 10, 0, 0, Math.PI * 2); g.stroke();
+    }
 
     const status = p.status || [];
     if (status.includes('slime')) {
@@ -709,6 +715,13 @@ MR.Render = (() => {
 
   // Glowing ring + bouncing marker on your own unfinished task stations.
   function drawStation(g, t, icon, time) {
+    if (t.busy) {
+      g.save();
+      g.globalAlpha = 0.35;
+      drawStation(g, { ...t, busy: false }, icon, time);
+      g.restore();
+      return;
+    }
     if (t.locked) {
       // Anchored: grey ring with chains and a countdown.
       g.save();
@@ -1071,7 +1084,7 @@ MR.Render = (() => {
     }
     if (s.showArrows) {
       const toScreen = (x, y) => ({ x: cw / 2 + (x - cam.x) * zoom, y: ch / 2 + (y - cam.y) * zoom });
-      drawEdgeArrows(g, s.tasks, toScreen, cw, ch);
+      drawEdgeArrows(g, s.arrowTasks || s.tasks, toScreen, cw, ch);
     }
     if (s.showJoystick) drawJoystick(g, MR.Input.joy, MR.Input.RADIUS, MR.Input.isTouch, ch);
     stepParticles(g, s.dt, false, ch);

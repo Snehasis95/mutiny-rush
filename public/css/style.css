@@ -655,3 +655,31 @@ input:focus { border-color: var(--wood); }
   .look-panel .btn-go { padding: 8px; font-size: 18px; }
   .parrot-text { margin: -6px 0 6px; font-size: 14px; }
 }
+
+/* ---------- Crews (team mode) ---------- */
+.crews { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.crew-box { border: 3px solid var(--parch-edge); border-radius: 12px; background: #fffaf0; padding: 6px 8px; min-width: 0; }
+.crew-red { border-color: #e9a29f; }
+.crew-blue { border-color: #9cc8ec; }
+.crew-box.mine { box-shadow: 0 0 0 2px var(--wood); }
+.crew-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-weight: 700; font-size: 14px; margin-bottom: 4px; }
+.crew-join { font-size: 12px; padding: 3px 9px; }
+.crew-list { list-style: none; margin: 0; padding: 0; }
+.crew-list li { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; padding: 2px 0; min-width: 0; }
+.crew-list li.me .crew-name { text-decoration: underline; }
+.crew-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crew-list .dot { width: 12px; height: 12px; }
+.crew-shuffle { grid-column: 1 / -1; justify-self: start; font-size: 13px; padding: 4px 10px; }
+.scoreboard { display: grid; gap: 6px; margin-bottom: 10px; }
+.score-row { display: grid; grid-template-columns: 110px 1fr 54px; gap: 8px; align-items: center; font-weight: 700; font-size: 15px; }
+.score-row.mine { text-decoration: underline; }
+.score-row .count { text-align: right; }
+.task-list { max-height: 55vh; overflow-y: auto; }
+@media (max-height: 430px) {
+  #optionsPanel .hint { display: none; }
+  .rank-list li { padding: 3px 10px; margin-bottom: 3px; font-size: 14px; }
+  .scoreboard { gap: 2px; margin-bottom: 6px; }
+  .score-row { font-size: 13px; }
+  .results-panel { padding: 10px 16px 12px; }
+  .winner { margin: 0 0 4px; }
+}
