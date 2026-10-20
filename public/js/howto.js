@@ -218,7 +218,8 @@ MR.HowTo = (() => {
     {
       title: '👥 Team Mode',
       html: `<p>In <b>Teams</b>, two crews race. Your crew <b>shares one task list</b>, so split up and cover the ship.</p>
-             <p>Items never hit your own crew. Look for the <b>red</b> or <b>blue ring</b> under each pirate.</p>`,
+             <p><b>🤝 Co-op tasks</b> need two crewmates: ⛵ hold the sail together, 🪣 take turns pumping, 🏦 turn the vault's two keys in time. Start one and your crew gets a call: tap <b>On my way!</b></p>
+             <p>Items never hit your own crew.</p>`,
       draw(g, t) {
         deck(g);
         const c = (t % 5) / 4;

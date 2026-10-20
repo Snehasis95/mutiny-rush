@@ -137,6 +137,8 @@ io.on('connection', socket => {
     ack({ ok: !error, error });
   });
   socket.on('cancelTask', () => active() && room.cancelTask(pid));
+  socket.on('coop', data => active() && room.coopInput(pid, data));
+  socket.on('coopReply', data => data && active() && room.coopReply(pid, String(data.taskId), String(data.action)));
 
   socket.on('grabBarrel', (barrelId, ack) => {
     if (typeof ack !== 'function') return;

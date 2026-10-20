@@ -62,6 +62,10 @@
     blockers: [],      // Kraken tentacles currently blocking doorways
     stormSeed: Math.random() * 6.28, // starting wind direction for ⛈️ Storm
     lastInterruptAt: -1e9,       // waiting for the server to answer a USE / item tap
+    calls: [],         // 🤝 open co-op calls on my crew: { taskId, type, callerId, coming, ping, x, y, area }
+    dismissed: new Set(), // calls I closed with ✕ ("taskId:ping")
+    heard: new Map(),  // taskId -> last ping I was buzzed for
+    alertPending: false, // a call came in while I was busy in a mini-game
   };
 
   function freshMy() {
@@ -74,7 +78,7 @@
   const LOOKS = MR.Shared.looks;
   const eventInfo = new Map(EVENTS.types.map(t => [t.id, t]));
   const MAP = MR.Shared.map;
-  const typeInfo = new Map(TASKS.types.map(t => [t.id, t]));
+  const typeInfo = new Map([...TASKS.types, ...TASKS.coopTypes].map(t => [t.id, t]));
   const itemInfo = new Map(PICKUPS.items.map(i => [i.id, i]));
   const hatchInfo = new Map(MAP.hatches.map(h => [h.id, h]));
   const areaName = (x, y) => (MAP.areas.find(a => x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h) || {}).name || '';
@@ -691,6 +695,7 @@
     S.blockers = [];
     S.my = freshMy();
     S.busy = false;
+    resetCalls();
     closeMinigame(false);
     for (const id of ['#menu', '#playersPanel', '#results', '#picker', '#hatchPanel', '#mapPanel']) $(id).classList.add('hidden');
     renderTaskList();
@@ -719,6 +724,7 @@
     S.blockers = [];
     S.my = freshMy();
     S.busy = false;
+    resetCalls();
     closeMinigame(false);
     for (const id of ['#menu', '#playersPanel', '#results', '#picker', '#hatchPanel', '#mapPanel', '#countdown']) $(id).classList.add('hidden');
     setHudMode('lobby');
@@ -734,6 +740,15 @@
       }
       MR.Render.buildLobby();
     }
+  }
+
+  function resetCalls() {
+    S.calls = [];
+    S.dismissed.clear();
+    S.heard.clear();
+    S.alertPending = false;
+    S.coopEarly = null;
+    $('#coopBanner').classList.add('hidden');
   }
 
   function bubbleFor(id, now) {
@@ -774,12 +789,18 @@
       const area = document.createElement('span');
       area.className = 'area';
       const lockLeft = Math.ceil((t.lockedUntil - now) / 1000);
-      let where = ` · ${t.area}`;
+      const who = id => (id === S.myId ? 'you' : nameById(id));
+      let where = ` · ${t.coop && t.area2 ? `${t.area} + ${t.area2}` : t.area}`;
       if (!t.done && lockLeft > 0) where = ` · ⚓ ${lockLeft}s`;
-      else if (isTeamGame() && t.done && t.doneBy) where = ` · ${t.doneBy === S.myId ? 'you' : nameById(t.doneBy)}`;
-      else if (isTeamGame() && t.busyBy && t.busyBy !== S.myId) where = ` · ⏳ ${nameById(t.busyBy)}`;
+      else if (isTeamGame() && t.done && t.doneBy) where = ` · ${who(t.doneBy)}${t.doneWith ? ` & ${who(t.doneWith)}` : ''}`;
+      else if (t.coop && t.session) {
+        where = t.session.phase === 'waiting'
+          ? ` · 🤝 ${who(t.session.callerId)} waiting`
+          : ` · 🤝 ${t.session.members.map(who).join(' & ')}`;
+      } else if (isTeamGame() && t.busyBy && t.busyBy !== S.myId) where = ` · ⏳ ${nameById(t.busyBy)}`;
       area.textContent = where;
-      li.append(`${t.done ? '✔' : info.icon} ${info.name}`, area);
+      if (t.coop) li.classList.add('coop');
+      li.append(`${t.done ? '✔' : info.icon} ${t.coop && !t.done ? '🤝 ' : ''}${info.name}`, area);
       return li;
     }));
   }
@@ -901,9 +922,10 @@
       time: now / 1000,
       players,
       blockers: S.blockers,
-      tasks: S.room.state === 'ended' ? [] : S.tasks.filter(t => !t.done).map(t => ({
-        x: t.x, y: t.y, icon: typeInfo.get(t.type).icon, locked: t.lockedUntil > now,
-      })),
+      tasks: S.room.state === 'ended' ? [] : S.tasks.filter(t => !t.done).flatMap(t => {
+        const spot = { x: t.x, y: t.y, icon: typeInfo.get(t.type).icon, locked: t.lockedUntil > now };
+        return t.coop && t.x2 != null ? [spot, { ...spot, x: t.x2, y: t.y2 }] : [spot];
+      }).concat(S.room.state === 'playing' ? S.calls.filter(c => c.callerId !== S.myId).map(c => ({ x: c.x, y: c.y, icon: '🤝', help: true })) : []),
     });
   }
 
@@ -954,12 +976,14 @@
     let best = null, bestD = TASKS.USE_DIST;
     for (const t of S.tasks) {
       if (t.done || (t.busyBy && t.busyBy !== S.myId)) continue;
-      const d = dist(t);
+      // 🤝 Co-op: either lock counts; skip it when two crewmates are already on it.
+      if (t.coop && t.session && t.session.members.length >= 2 && !t.session.members.includes(S.myId)) continue;
+      const d = t.coop && t.x2 != null ? Math.min(dist(t), dist({ x: t.x2, y: t.y2 })) : dist(t);
       if (d <= bestD) { best = t; bestD = d; }
     }
     if (best) {
       if (best.lockedUntil > now) return { kind: 'locked', task: best, icon: '⚓' };
-      return { kind: 'task', task: best, icon: typeInfo.get(best.type).icon };
+      return { kind: 'task', task: best, icon: best.coop ? '🤝' : typeInfo.get(best.type).icon };
     }
     if (!S.my.pickup) {
       const b = S.barrels.find(br => dist(br) <= PICKUPS.GRAB_DIST);
@@ -986,10 +1010,11 @@
         if (!S.mg || S.mg.taskId !== t.id) return;
         if (!res.ok) {
           S.mg = null;
-          toast(res.error);
+          toast(res.error, 3500);
           return;
         }
-        openMinigame(t.type, res.scramble, t.id);
+        if (res.coop) openCoop(t.type, t.id);
+        else openMinigame(t.type, res.scramble, t.id);
       });
       return;
     }
@@ -1028,6 +1053,42 @@
     S.mg = { type, taskId, cleanup: MR.Minigames[type](ctx), pending: false };
   }
 
+  // 🤝 Co-op mini-game: the server runs it; this screen shows it and sends taps.
+  function openCoop(type, taskId) {
+    const info = typeInfo.get(type);
+    const stage = $('#mgStage');
+    stage.replaceChildren();
+    $('#mgTitle').textContent = `🤝 ${info.name}`;
+    $('#mgHint').textContent = '';
+    $('#mg').classList.remove('hidden');
+    MR.Input.reset();
+    const view = MR.Coop[type]({
+      stage,
+      myId: S.myId,
+      hint: text => { $('#mgHint').textContent = text; },
+      send: data => socket.emit('coop', data),
+      info: id => {
+        const p = S.room && S.room.players.find(q => q.id === id);
+        return p ? { name: p.name, color: p.color } : { name: 'Someone', color: '#999' };
+      },
+      distTo: id => {
+        const o = S.others.get(id);
+        const t = S.tasks.find(x => x.id === taskId);
+        if (!o || !t) return null;
+        const spot = S.mg && S.mg.lastState ? S.mg.lastState.target : t;
+        return Math.max(0, Math.round(Math.hypot(o.x - spot.x, o.y - spot.y) / 40));
+      },
+    });
+    S.mg = { type, taskId, coop: true, cleanup: view.cleanup, update: view.update, pending: false, lastState: null };
+    if (S.coopEarly && S.coopEarly.taskId === taskId) applyCoopState(S.coopEarly);
+    S.coopEarly = null;
+  }
+
+  function applyCoopState(st) {
+    S.mg.lastState = st;
+    S.mg.update(st);
+  }
+
   function finishMinigame(taskId) {
     if (!S.mg || S.mg.taskId !== taskId) return;
     socket.emit('completeTask', taskId, res => {
@@ -1043,6 +1104,11 @@
     $('#mg').classList.add('hidden');
     $('#mgStage').replaceChildren();
     if (notifyServer) socket.emit('cancelTask');
+    // A crewmate called while I was busy: tell me now.
+    if (S.alertPending) {
+      S.alertPending = false;
+      if (pickCall()) callAlert();
+    }
   }
 
   $('#useBtn').addEventListener('click', useNearby);
@@ -1373,6 +1439,106 @@
 
   socket.on('notice', ({ text }) => toast(text, 2500));
 
+  // ---------- 🤝 co-op tasks: the live game, the crew's calls ----------
+  socket.on('coop', st => {
+    const mine = S.mg && S.mg.taskId === st.taskId;
+    if (st.phase === 'done') {
+      if (mine) closeMinigame(false);
+      MR.Sfx.fanfare();
+      return;
+    }
+    if (st.phase === 'soloTurned') {
+      if (mine) closeMinigame(false);
+      toast(`🏦 Key turned! Run to the other lock in the ${st.area}: ${Math.round(st.ms / 1000)}s`, 4000);
+      return;
+    }
+    if (!mine) return;
+    if (!S.mg.update) { S.coopEarly = st; return; } // arrived before the USE answer
+    const was = S.mg.lastState;
+    applyCoopState(st);
+    if (was && was.phase === 'waiting' && st.phase === 'active') { MR.Sfx.good(); MR.vibrate([60, 40, 60]); }
+    if (was && was.phase === 'active' && st.phase === 'waiting') toast('Your crewmate left. Calling the crew again…', 2500);
+  });
+
+  socket.on('coopCalls', calls => {
+    S.calls = calls;
+    for (const c of calls) {
+      if (c.callerId === S.myId) continue;
+      if ((S.heard.get(c.taskId) || 0) >= c.ping) continue;
+      S.heard.set(c.taskId, c.ping);
+      // New call (or the 20s reminder): buzz now, or once the current mini-game is over.
+      if (S.mg) S.alertPending = true;
+      else callAlert();
+    }
+    renderCoopBanner(true);
+  });
+
+  socket.on('coopEnd', e => {
+    if (e.by === S.myId) return;
+    const info = typeInfo.get(e.type);
+    if (e.reason === 'joined' && e.wasComing) toast(`👍 ${nameOf(e.by)} got there first, back to your tasks!`, 2500);
+    else if (e.reason === 'left' && e.wasComing) toast(`${nameOf(e.by)} left ${info.place}`, 2500);
+  });
+
+  function callAlert() {
+    MR.Sfx.horn();
+    MR.vibrate([150, 80, 150]);
+  }
+
+  // The banner at the bottom: "🤝 Rahul needs a hand…" / "Priya is going" / "Heading to…"
+  let bannerKey = '';
+  function renderCoopBanner(force = false) {
+    const el = $('#coopBanner');
+    const playing = S.room && S.room.state === 'playing';
+    const call = playing && !S.my.inHatch ? pickCall() : null;
+    const key = call ? `${call.taskId}|${call.ping}|${call.coming.join()}|${!!S.mg}` : '';
+    if (!force && key === bannerKey) return;
+    bannerKey = key;
+    if (!call || S.mg) { el.classList.add('hidden'); return; }
+    const info = typeInfo.get(call.type);
+    const caller = nameOf(call.callerId);
+    const imComing = call.coming.includes(S.myId);
+    const other = call.coming.find(id => id !== S.myId);
+    el.classList.remove('hidden');
+    el.classList.toggle('chip', imComing);
+    const text = document.createElement('span');
+    text.className = 'coop-banner-text';
+    const btns = [];
+    const button = (cls, label, fn) => {
+      const b = document.createElement('button');
+      b.className = cls;
+      b.textContent = label;
+      b.addEventListener('click', fn);
+      btns.push(b);
+    };
+    if (imComing) {
+      text.textContent = `🤝 Heading to ${info.place} · ${call.area}`;
+      button('coop-x', '✕', () => socket.emit('coopReply', { taskId: call.taskId, action: 'cancel' }));
+    } else {
+      text.innerHTML = '';
+      const b = document.createElement('b');
+      b.textContent = caller;
+      text.append('🤝 ', b, ` needs a hand at ${info.place}!`);
+      if (other) text.append(` 🏃 ${nameOf(other)} is going`);
+      button(other ? 'btn btn-small coop-go anyway' : 'btn btn-go coop-go', other ? 'Go anyway' : '🏃 On my way!', () => {
+        socket.emit('coopReply', { taskId: call.taskId, action: 'coming' });
+      });
+      button('coop-x', '✕', () => {
+        S.dismissed.add(`${call.taskId}:${call.ping}`);
+        renderCoopBanner(true);
+      });
+    }
+    el.replaceChildren(text, ...btns);
+  }
+
+  // The call to show: the one I'm heading to, else the newest one I haven't closed.
+  function pickCall() {
+    const others = S.calls.filter(c => c.callerId !== S.myId && !(S.mg && S.mg.taskId === c.taskId));
+    return others.find(c => c.coming.includes(S.myId))
+      || others.slice().reverse().find(c => !S.dismissed.has(`${c.taskId}:${c.ping}`))
+      || null;
+  }
+
   const nameOf = id => {
     const p = S.room && S.room.players.find(pl => pl.id === id);
     return p ? p.name : 'Someone';
@@ -1639,13 +1805,21 @@
         return;
       }
       const playing = S.room.state === 'playing';
-      const open = S.tasks.filter(t => !t.done).map(t => {
+      const open = [];
+      for (const t of S.tasks) {
+        if (t.done) continue;
         const lockedLeft = Math.ceil((t.lockedUntil - now) / 1000);
-        return { ...t, icon: typeInfo.get(t.type).icon, locked: lockedLeft > 0, lockedLeft, busy: !!(t.busyBy && t.busyBy !== S.myId) };
-      });
+        const full = t.coop && t.session && t.session.members.length >= 2 && !t.session.members.includes(S.myId);
+        const st = { ...t, icon: typeInfo.get(t.type).icon, locked: lockedLeft > 0, lockedLeft, busy: !!(t.busyBy && t.busyBy !== S.myId) || full };
+        open.push(st);
+        if (t.coop && t.x2 != null) open.push({ ...st, x: t.x2, y: t.y2 }); // 🔑 the vault's second lock
+      }
       const arrowTasks = open.filter(t => !t.busy)
         .sort((a, b) => Math.hypot(a.x - S.me.x, a.y - S.me.y) - Math.hypot(b.x - S.me.x, b.y - S.me.y))
         .slice(0, 6);
+      // 🤝 Crewmates' calls always get a green arrow (even with task arrows off).
+      const helpArrows = playing && !S.mg ? S.calls.filter(c => c.callerId !== S.myId).map(c => ({ x: c.x, y: c.y, icon: '🤝', help: true })) : [];
+      renderCoopBanner();
       MR.Render.draw(canvas, {
         dpr, dt, me: S.me, players, time: now / 1000,
         sway: MR.Settings.get('sway'),
@@ -1656,8 +1830,9 @@
         fog: playing && now < S.my.fogUntil,
         storm: playing && now < S.my.stormUntil,
         shipEvent: playing ? S.event : null,
-        showArrows: playing && !S.my.inHatch && S.room.options.taskArrows,
-        arrowTasks,
+        showArrows: playing && !S.my.inHatch && (S.room.options.taskArrows || helpArrows.length > 0),
+        arrowTasks: (S.room.options.taskArrows ? arrowTasks : []).concat(helpArrows),
+        helpSpots: helpArrows,
         showJoystick: playing && !S.mg && !S.my.inHatch,
       });
       updateUseButton();

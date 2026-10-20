@@ -157,7 +157,8 @@ test('the crew that finishes wins, and every member gets a parrot', () => {
   const clock = fakeClock();
   try {
     const { room, io, p } = teamGame(['A', 'B', 'C'], { taskCount: 3 }); // red: A, C  blue: B
-    for (const t of p('A').tasks) {
+    for (const t of p('A').tasks.filter(x => x.coop)) t.done = true; // 🤝 covered in coop.test.js
+    for (const t of p('A').tasks.filter(x => !x.coop)) {
       const who = p('C');
       who.x = t.x; who.y = t.y;
       room.startTask('C', t.id);

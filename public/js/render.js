@@ -957,6 +957,18 @@ MR.Render = (() => {
     g.restore();
   }
 
+  // 🤝 Where a crewmate needs a hand: expanding green rings on the deck.
+  function drawHelpSpot(g, h, time) {
+    g.save();
+    for (let i = 0; i < 2; i++) {
+      const k = (time * 0.8 + i * 0.5) % 1;
+      g.strokeStyle = `rgba(93,255,122,${0.8 * (1 - k)})`;
+      g.lineWidth = 6;
+      g.beginPath(); g.arc(h.x, h.y, 40 + k * 50, 0, Math.PI * 2); g.stroke();
+    }
+    g.restore();
+  }
+
   // Arrows at the screen edge pointing to off-screen tasks (screen space).
   function drawEdgeArrows(g, tasks, toScreen, cw, ch) {
     const M = 46;
@@ -975,15 +987,22 @@ MR.Render = (() => {
       const ang = Math.atan2(dy, dx);
       g.save();
       g.translate(ax, ay);
-      g.fillStyle = 'rgba(20,32,46,.75)';
+      if (t.help) {
+        // 🤝 A crewmate's call: green and pulsing
+        const s = 1 + 0.12 * Math.sin(performance.now() / 150);
+        g.scale(s, s);
+        g.fillStyle = 'rgba(30,110,50,.9)';
+      } else {
+        g.fillStyle = 'rgba(20,32,46,.75)';
+      }
       g.beginPath(); g.arc(0, 0, 20, 0, Math.PI * 2); g.fill();
       g.font = '20px sans-serif';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillText(t.icon, 0, 1);
       g.rotate(ang);
-      g.fillStyle = '#ffd23c';
-      g.strokeStyle = '#7a5300';
+      g.fillStyle = t.help ? '#5dff7a' : '#ffd23c';
+      g.strokeStyle = t.help ? '#1e6e32' : '#7a5300';
       g.lineWidth = 2;
       g.beginPath(); g.moveTo(32, 0); g.lineTo(21, -9); g.lineTo(21, 9); g.closePath(); g.fill(); g.stroke();
       g.restore();
@@ -1250,6 +1269,7 @@ MR.Render = (() => {
     if (mapCanvas) g.drawImage(mapCanvas, -PAD.l, -PAD.t);
 
     if (s.showHatches) for (const h of map.hatches) drawHatch(g, h, s.time, h.id === s.inHatch);
+    for (const h of s.helpSpots || []) drawHelpSpot(g, h, s.time);
     for (const t of s.tasks) drawStation(g, t, t.icon, s.time);
     for (const b of s.barrels) drawBarrel(g, b, s.time);
     if (s.shipEvent && s.shipEvent.id === 'kraken') drawKraken(g, s.shipEvent.data.rects, s.shipEvent.phase === 'warning', s.time);
@@ -1319,8 +1339,15 @@ MR.Render = (() => {
     g.textAlign = 'center';
     g.textBaseline = 'middle';
     for (const t of o.tasks) {
-      g.fillStyle = t.locked ? 'rgba(90,90,90,.9)' : '#ffd23c';
-      g.strokeStyle = t.locked ? '#333' : '#7a5300';
+      if (t.help) {
+        // 🤝 A crewmate's call: green pulsing ring
+        const pr = (o.time * 0.8) % 1;
+        g.strokeStyle = `rgba(93,255,122,${1 - pr})`;
+        g.lineWidth = 3 * k;
+        g.beginPath(); g.arc(t.x, t.y, (16 + pr * 22) * k, 0, Math.PI * 2); g.stroke();
+      }
+      g.fillStyle = t.help ? '#3fa34d' : t.locked ? 'rgba(90,90,90,.9)' : '#ffd23c';
+      g.strokeStyle = t.help ? '#1e6e32' : t.locked ? '#333' : '#7a5300';
       g.lineWidth = 2 * k;
       g.beginPath(); g.arc(t.x, t.y, 13 * k, 0, Math.PI * 2); g.fill(); g.stroke();
       g.font = `${14 * k}px sans-serif`;

@@ -4,6 +4,7 @@ const tasksDef = require('../shared/tasks');
 const pickupsDef = require('../shared/pickups');
 const { assign, pickTypes } = require('./taskAssign');
 const bots = require('./bots');
+const coop = require('./coop');
 const eventsDef = require('../shared/events');
 const looks = require('../shared/looks');
 const lobbyMap = require('../shared/lobbyMap');
@@ -179,8 +180,9 @@ class Room {
   clearActive(p) {
     if (!p.activeTask) return;
     const t = p.tasks.find(tk => tk.id === p.activeTask.taskId);
-    if (t && t.busyBy === p.id) t.busyBy = null;
     p.activeTask = null;
+    if (t && t.coop) coop.leave(this, p, t, Date.now()); // the crewmate keeps waiting
+    else if (t && t.busyBy === p.id) t.busyBy = null;
   }
 
   // Keep the number of bots in line with the Captain's choice, leaving seats free for people.
@@ -304,6 +306,7 @@ class Room {
     this.toPlayer(p, 'correct', { x: p.x, y: p.y });
     if (this.state === 'countdown') this.toPlayer(p, 'countdown', { ms: Math.max(0, this.countdownEndsAt - Date.now()) });
     if (this.event) this.toPlayer(p, 'event', this.eventPayload(Date.now()));
+    if (this.teamTasks && p.team) this.toPlayer(p, 'coopCalls', coop.callsFor(this, p.team));
   }
 
   // Private message to one player (skipped while they're offline).
@@ -383,8 +386,11 @@ class Room {
       if (this.teamTasks) this.teamTasks[p.team].push(...mine);
       else p.tasks = mine;
     });
-    // Teammates all point at the same shared list (tasks per player x team size).
-    if (this.teamTasks) for (const p of list) p.tasks = this.teamTasks[p.team];
+    // Teammates all point at the same shared list (tasks per player x team size), with 🤝 co-op tasks mixed in.
+    if (this.teamTasks) {
+      coop.addTasks(this);
+      for (const p of list) p.tasks = this.teamTasks[p.team];
+    }
     this.winnerId = null;
     this.winnerTeam = null;
     this.barrels = [];
@@ -445,6 +451,8 @@ class Room {
     }
     this.state = 'ended';
     this.winnerId = winnerId;
+    // Race over: co-op calls just stop (no "left the task" messages).
+    for (const list of Object.values(this.teamTasks || {})) for (const t of list) t.session = null;
     for (const p of this.players.values()) {
       this.clearActive(p);
       p.inHatch = null;
@@ -477,6 +485,7 @@ class Room {
         }
       }
       this.updateEvent(now);
+      coop.tick(this, now, TICK_MS / 1000);
       for (const p of this.players.values()) {
         if (p.isBot && this.state === 'playing') bots.update(this, p, TICK_MS / 1000, now);
       }
@@ -706,7 +715,8 @@ class Room {
     // Walking away cancels a task in progress.
     if (p.activeTask) {
       const t = this.taskById(p, p.activeTask.taskId);
-      if (!t || dist(t, p) > tasksDef.USE_DIST + SLACK) this.clearActive(p);
+      const spot = t && t.coop ? coop.spotOf(t, p) : t;
+      if (!t || dist(spot, p) > tasksDef.USE_DIST + SLACK) this.clearActive(p);
     }
 
     if (Math.hypot(res.x - x, res.y - y) > 4) {
@@ -725,6 +735,12 @@ class Room {
     const t = this.taskById(p, taskKey);
     if (!t || t.done) return { error: 'That task is not available.' };
     if (Date.now() < t.lockedUntil) return { error: '⚓ That task is anchored! Wait for the chain to fall off.' };
+    if (t.coop) {
+      // 🤝 Call the crew, or join the crewmate who's waiting.
+      if (p.activeTask && p.activeTask.taskId !== t.id) this.clearActive(p);
+      const error = coop.start(this, p, t, Date.now());
+      return { error, coop: !error };
+    }
     if (dist(t, p) > tasksDef.USE_DIST + SLACK) return { error: 'Get closer to the station.' };
     const other = t.busyBy && t.busyBy !== id && this.players.get(t.busyBy);
     if (other && other.activeTask && other.activeTask.taskId === t.id) return { error: `${other.name} is already on it!` };
@@ -745,6 +761,7 @@ class Room {
     if (!p || this.state !== 'playing') return 'The game is not running.';
     const t = this.taskById(p, taskKey);
     if (!p.activeTask || !t || p.activeTask.taskId !== t.id) return 'That task was interrupted.';
+    if (t.coop) return 'Co-op tasks finish when you both do your part.';
     if (Date.now() - p.activeTask.startedAt < typeById.get(t.type).minMs) return 'Too fast!';
     t.done = true;
     t.doneBy = id;
@@ -760,6 +777,20 @@ class Room {
     if (!p) return;
     this.clearActive(p);
     this.sendTeamTasks(p);
+  }
+
+  // 🤝 Taps inside a co-op mini-game (hold / pump / turn).
+  coopInput(id, data) {
+    const p = this.players.get(id);
+    if (!p || this.state !== 'playing') return 'The game is not running.';
+    return coop.input(this, p, data, Date.now());
+  }
+
+  // 🤝 "On my way!" / "Go anyway" / cancel.
+  coopReply(id, taskId, action) {
+    const p = this.players.get(id);
+    if (!p || this.state !== 'playing' || !this.teamMode()) return 'The game is not running.';
+    return coop.reply(this, p, taskId, action);
   }
 
   // ---------------- barrels + keys ----------------
@@ -887,7 +918,10 @@ class Room {
       case 'anchor': {
         const t = pick(q.tasks.filter(tk => !tk.done && now >= tk.lockedUntil));
         t.lockedUntil = now + ANCHOR_MS;
-        if (t.busyBy) { const b = this.players.get(t.busyBy); if (b) { this.clearActive(b); this.toPlayer(b, 'interrupt'); } }
+        for (const wid of coop.workers(t)) {
+          const b = this.players.get(wid);
+          if (b) { this.clearActive(b); this.toPlayer(b, 'interrupt'); }
+        }
         this.sendTeamTasks(q);
         break;
       }
@@ -1023,6 +1057,7 @@ class Room {
     this.toPlayer(p, 'tasks', p.tasks.map(t => ({
       id: t.id, type: t.type, stationId: t.stationId, x: t.x, y: t.y, area: t.area, done: t.done,
       lockedMs: Math.max(0, t.lockedUntil - now), busyBy: t.busyBy, doneBy: t.doneBy,
+      ...coop.taskFields(t),
     })));
   }
 

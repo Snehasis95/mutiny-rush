@@ -847,3 +847,77 @@ input:focus { border-color: var(--wood); }
   .howto-body { grid-template-columns: 1fr; }
   .howto-items { grid-template-columns: 1fr; }
 }
+
+/* ---------- 🤝 Co-op tasks ---------- */
+.task-list li.coop { border-left: 4px solid #3fa34d; padding-left: 6px; }
+
+/* Call banner: bottom middle, between the joystick and the buttons */
+.coop-banner {
+  position: absolute; z-index: 4;
+  left: 50%; bottom: calc(14px + var(--safe-b)); transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  max-width: min(520px, calc(100% - 420px)); min-width: 260px;
+  padding: 8px 8px 8px 14px; border-radius: 16px;
+  background: rgba(22, 70, 34, .94); border: 3px solid #5dff7a; color: #fff;
+  font-weight: 600; font-size: 15px; line-height: 1.25;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .4);
+  animation: coop-in .25s ease-out;
+}
+.coop-banner.chip { padding: 5px 6px 5px 12px; font-size: 14px; border-width: 2px; background: rgba(22, 70, 34, .85); }
+.coop-banner-text { flex: 1; min-width: 0; }
+.coop-banner .coop-go { width: auto; flex: none; padding: 8px 12px; font-size: 15px; white-space: nowrap; }
+.coop-banner .coop-go.anyway { background: var(--wood); }
+.coop-x {
+  flex: none; width: 32px; height: 32px; border-radius: 10px; cursor: pointer;
+  border: none; background: rgba(0, 0, 0, .35); color: #fff; font: 700 16px 'Fredoka', sans-serif;
+}
+@keyframes coop-in { from { transform: translate(-50%, 30px); opacity: 0; } }
+@media (max-height: 430px) {
+  .coop-banner { font-size: 13px; bottom: calc(8px + var(--safe-b)); max-width: calc(100% - 360px); min-width: 230px; }
+  .coop-banner .coop-go { padding: 6px 10px; font-size: 13px; }
+}
+
+/* Co-op mini-game screen */
+.coop { position: absolute; inset: 0; display: flex; }
+.coop-art { position: relative; flex: 1; min-width: 0; touch-action: none; background: radial-gradient(circle at 50% 40%, #6a4528, #3a2312); }
+.coop-side {
+  flex: none; width: 170px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(0, 0, 0, .25); padding: 8px;
+}
+.coop-btn {
+  width: 140px; height: 140px; border-radius: 50%; cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none;
+  font: 700 22px 'Fredoka', sans-serif; color: #fff; line-height: 1.2;
+  background: #6b4423; border: 4px solid #3d2612; box-shadow: 0 8px 0 #3d2612;
+}
+.coop-btn.hold { background: var(--go); border-color: var(--go-d); box-shadow: 0 8px 0 var(--go-d); }
+.coop-btn.hold.down { transform: translateY(6px); box-shadow: 0 2px 0 var(--go-d), 0 0 24px #5dff7a; }
+.coop-btn.pump { background: #5a4a3a; border-color: #2e241a; box-shadow: 0 8px 0 #2e241a; font-size: 18px; }
+.coop-btn.pump.my-turn { background: var(--use); color: var(--ink); border-color: var(--use-d); box-shadow: 0 8px 0 var(--use-d), 0 0 26px rgba(242, 182, 50, .8); animation: pulse .6s ease-in-out infinite; }
+.coop-btn:active { transform: translateY(6px); box-shadow: 0 2px 0 rgba(0, 0, 0, .4); }
+.coop-twist { font-size: 64px; color: #ffd23c; line-height: 1; animation: spin-hint 1.6s ease-in-out infinite; }
+.coop-twist-text { color: #f3e2bf; font-weight: 600; text-align: center; font-size: 14px; }
+@keyframes spin-hint { 50% { transform: rotate(60deg); } }
+
+/* "Calling your crew…" */
+.coop-wait {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  background: rgba(15, 10, 5, .72); color: #fff; text-align: center; padding: 12px;
+}
+.coop-wait.hidden { display: none; }
+.coop-wait-title { font: 700 26px 'Fredoka', sans-serif; color: #5dff7a; animation: pulse 1.2s ease-in-out infinite; }
+.coop-mates { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 260px; }
+.coop-mate {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 10px;
+  background: rgba(255, 255, 255, .1); font-size: 16px;
+}
+.coop-mate b { flex: none; }
+.coop-mate span:last-child { margin-left: auto; opacity: .9; }
+.coop-mate.coming { background: rgba(63, 163, 77, .45); }
+.coop-wait-hint { margin: 0; font-size: 14px; opacity: .8; max-width: 420px; }
+@media (max-height: 430px) {
+  .coop-side { width: 130px; }
+  .coop-btn { width: 112px; height: 112px; font-size: 19px; }
+  .coop-wait-title { font-size: 21px; }
+  .coop-mate { font-size: 14px; padding: 4px 10px; }
+}

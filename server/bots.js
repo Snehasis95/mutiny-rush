@@ -6,6 +6,7 @@ const physics = require('../shared/physics');
 const tasksDef = require('../shared/tasks');
 const pickupsDef = require('../shared/pickups');
 const eventsDef = require('../shared/events');
+const coop = require('./coop');
 
 const NAMES = ['Blackbeard', 'Anne Bonny', 'Calico Jack', 'Long John', 'Barbossa', 'Mad Morgan', 'Flint', 'Davy Jones', 'Mary Read', 'Red Rackham'];
 
@@ -20,14 +21,20 @@ const LEVELS = {
     barrelReach: 220,       // only detours for barrels this close
     itemDelay: [4000, 9000],
     leaderChance: 0.3,      // how often they aim at whoever is winning
+    coopAnswer: 3000,       // 🤝 how long before answering a crewmate's call
+    coopAct: [700, 1200],   // reaction time inside a co-op task (pump, turn, hold)
   },
   normal: {
     walk: 1, taskExtra: [2500, 6000], pause: [0, 0], barrelReach: 380, itemDelay: [1500, 5000], leaderChance: 0.7,
+    coopAnswer: 1500, coopAct: [350, 700],
   },
   hard: {
     walk: 1, taskExtra: [1000, 3000], pause: [0, 0], barrelReach: 520, itemDelay: [600, 2000], leaderChance: 1,
+    coopAnswer: 300, coopAct: [150, 350],
   },
 };
+const COOP_WAIT_MS = 20000; // a bot waiting for help gives up after this long with nobody coming
+const COOP_SKIP_MS = 15000; // ...and leaves co-op tasks alone for a while
 const LEVEL_IDS = Object.keys(LEVELS);
 const levelOf = room => LEVELS[room.options.botLevel] || LEVELS.normal;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -185,14 +192,31 @@ function resetPath(p) {
   if (p.brain) p.brain.path = null;
 }
 
+// Where a bot should stand for a co-op task it is starting: the nearest lock
+// (a crew of one with the vault: the lock that isn't turned yet).
+function coopSpot(p, t) {
+  const locks = t.x2 == null ? [{ x: t.x, y: t.y, i: 0 }] : [{ x: t.x, y: t.y, i: 0 }, { x: t.x2, y: t.y2, i: 1 }];
+  const open = locks.filter(l => !(t.turned && t.turned[l.i]));
+  return (open.length ? open : locks).sort((a, b) => dist(p, a) - dist(p, b))[0];
+}
+
 // Where should this bot go next? The nearest open task, or a barrel that's close by.
+// 🤝 Co-op tasks wait until the bot has nothing else to do.
 function chooseGoal(room, p, now) {
+  const b = brain(p);
   // Tasks a crewmate bot is already walking to are left for them.
   const claimed = new Set([...room.players.values()]
     .filter(q => q !== p && q.isBot && q.brain && q.brain.goal && q.brain.goal.kind === 'task' && q.tasks === p.tasks)
     .map(q => q.brain.goal.id));
-  const tasks = p.tasks.filter(t => !t.done && now >= t.lockedUntil && !claimed.has(t.id) && (!t.busyBy || t.busyBy === p.id));
-  const nearestTask = tasks.sort((a, b) => dist(p, a) - dist(p, b))[0];
+  const open = p.tasks.filter(t => !t.done && now >= t.lockedUntil && !claimed.has(t.id) && (!t.busyBy || t.busyBy === p.id));
+  let tasks = open.filter(t => !t.coop);
+  // One co-op task at a time per crew, or two bots could each wait for the other forever.
+  const crewOnCoop = p.tasks.some(t => t.coop && t.session) || [...room.players.values()]
+    .some(q => q !== p && q.tasks === p.tasks && q.brain && q.brain.goal && (q.brain.goal.coop || q.brain.goal.kind === 'coop'));
+  if (!tasks.length && !crewOnCoop && now >= (b.coopSkipUntil || 0)) {
+    tasks = open.filter(t => t.coop && !t.session).map(t => ({ ...coopSpot(p, t), id: t.id, type: t.type, coop: true }));
+  }
+  const nearestTask = tasks.sort((a, c) => dist(p, a) - dist(p, c))[0];
   if (!p.pickup) {
     const barrel = room.barrels
       .filter(b => b.kind === 'barrel')
@@ -202,7 +226,7 @@ function chooseGoal(room, p, now) {
       return { kind: 'barrel', id: barrel.id, x: barrel.x, y: barrel.y };
     }
   }
-  if (nearestTask) return { kind: 'task', id: nearestTask.id, type: nearestTask.type, x: nearestTask.x, y: nearestTask.y };
+  if (nearestTask) return { kind: 'task', id: nearestTask.id, type: nearestTask.type, x: nearestTask.x, y: nearestTask.y, coop: !!nearestTask.coop };
   // Every task is anchored: drift towards the middle and wait.
   return { kind: 'wait', x: map.spawn.x + rand(-150, 150), y: map.spawn.y + rand(-80, 80) };
 }
@@ -211,9 +235,73 @@ function goalStillValid(room, p, g, now) {
   if (g.kind === 'barrel') return !p.pickup && room.barrels.some(b => b.id === g.id);
   if (g.kind === 'task') {
     const t = p.tasks.find(tk => tk.id === g.id);
-    return t && !t.done && now >= t.lockedUntil && (!t.busyBy || t.busyBy === p.id);
+    return t && !t.done && now >= t.lockedUntil && (!t.busyBy || t.busyBy === p.id) && !(t.coop && t.session);
+  }
+  if (g.kind === 'coop') {
+    // On the way to help: still needed?
+    const t = p.tasks.find(tk => tk.id === g.id);
+    const s = t && t.session;
+    return !!s && !t.done && s.phase === 'waiting' && s.members.length === 1 && s.coming.includes(p.id);
   }
   return false;
+}
+
+// 🤝 A crewmate is calling and nobody has answered: say "On my way!" (after a moment) and head there.
+function answerCalls(room, p, b, lv, now) {
+  if (!room.teamMode() || (b.goal && b.goal.kind === 'coop')) return;
+  const t = p.tasks.find(x => x.coop && !x.done && x.session && x.session.phase === 'waiting'
+    && x.session.callerId !== p.id && !x.session.coming.length && now >= x.lockedUntil);
+  if (!t) { b.callSeen = null; return; }
+  if (!b.callSeen || b.callSeen.id !== t.id || b.callSeen.ping !== t.session.ping) b.callSeen = { id: t.id, ping: t.session.ping, at: now };
+  if (now - b.callSeen.at < lv.coopAnswer) return;
+  if (room.coopReply(p.id, t.id, 'coming') !== null) return;
+  const spot = coop.helpSpot(t);
+  b.goal = { kind: 'coop', id: t.id, x: spot.x, y: spot.y };
+  b.path = null;
+  b.restUntil = 0;
+}
+
+// 🤝 Inside a co-op task: wait for help (or give up), then hold / pump / turn like a person would.
+function playCoop(room, p, b, lv, now) {
+  const t = p.tasks.find(x => x.id === p.activeTask.taskId);
+  const s = t && t.session;
+  if (!s) return;
+  const me = s.members.find(m => m.id === p.id);
+  if (s.phase === 'waiting') {
+    b.coopActiveAt = 0;
+    if (s.coming.length) { b.coopWaitUntil = now + COOP_WAIT_MS; return; }
+    if (!b.coopWaitUntil) b.coopWaitUntil = now + COOP_WAIT_MS;
+    if (now >= b.coopWaitUntil) {
+      // Nobody came: do something else for a while.
+      room.cancelTask(p.id);
+      b.coopWaitUntil = 0;
+      b.coopSkipUntil = now + COOP_SKIP_MS;
+      b.goal = null;
+    }
+    return;
+  }
+  b.coopWaitUntil = 0;
+  if (!b.coopActiveAt) { b.coopActiveAt = now; b.actAt = 0; }
+  const react = () => now + rand(...lv.coopAct);
+  if (t.type === 'sail') {
+    if (!s.hold[p.id]) {
+      if (!b.actAt) b.actAt = react();
+      if (now >= b.actAt) { room.coopInput(p.id, { action: 'hold', on: true }); b.actAt = 0; }
+    }
+  } else if (t.type === 'pump') {
+    if ((s.solo || s.turn === p.id) && now >= s.jamUntil) {
+      if (!b.actAt) b.actAt = react();
+      if (now >= b.actAt) { room.coopInput(p.id, { action: 'pump' }); b.actAt = 0; }
+    } else {
+      b.actAt = 0;
+    }
+  } else if (t.type === 'vault' && me) {
+    const mine = t.turned[me.lock], theirs = t.turned[1 - me.lock];
+    if (mine) return;
+    // Turn right after the crewmate does, or go first after a short look around.
+    const due = theirs ? (b.actAt || (b.actAt = react())) : b.coopActiveAt + 1500 + (p.id.length % 5) * 300;
+    if (now >= due) { room.coopInput(p.id, { action: 'turn' }); b.actAt = 0; }
+  }
 }
 
 // Throw an item, usually at whoever is ahead.
@@ -245,6 +333,7 @@ function update(room, p, dt, now) {
 
   // Busy with a task: "play" it for a while, then finish.
   if (p.activeTask) {
+    if (p.activeTask.coop) return playCoop(room, p, b, lv, now);
     if (now >= b.taskUntil) {
       room.completeTask(p.id, p.activeTask.taskId);
       b.goal = null;
@@ -252,6 +341,7 @@ function update(room, p, dt, now) {
     }
     return;
   }
+  answerCalls(room, p, b, lv, now);
   if (now < b.restUntil) return; // Easy bots stop to think between tasks
 
   if (!b.goal || !goalStillValid(room, p, b.goal, now)) {
@@ -261,9 +351,20 @@ function update(room, p, dt, now) {
   const g = b.goal;
 
   // Arrived?
-  const reach = g.kind === 'task' ? tasksDef.USE_DIST - 25 : g.kind === 'barrel' ? pickupsDef.GRAB_DIST - 15 : 30;
+  const reach = g.kind === 'task' || g.kind === 'coop' ? tasksDef.USE_DIST - 25 : g.kind === 'barrel' ? pickupsDef.GRAB_DIST - 15 : 30;
   if (dist(p, g) <= reach) {
-    if (g.kind === 'task') {
+    if (g.kind === 'coop' || (g.kind === 'task' && g.coop)) {
+      // 🤝 Join the crewmate who called, or start calling.
+      const res = room.startTask(p.id, g.id);
+      if (res.error) {
+        b.goal = null;
+        if (g.kind === 'task') b.coopSkipUntil = now + 3000;
+      } else {
+        b.coopWaitUntil = 0;
+        b.coopActiveAt = 0;
+        b.goal = null; // pick afresh once this co-op task is over
+      }
+    } else if (g.kind === 'task') {
       const res = room.startTask(p.id, g.id);
       if (!res.error) {
         // Bots take a believable amount of time; scrambled tasks take longer.

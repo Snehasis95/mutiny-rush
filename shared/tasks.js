@@ -81,5 +81,28 @@
 
   const USE_DIST = 90; // how close you must stand to use a station
 
-  return { types, stations, USE_DIST, MIN_TASKS, MAX_TASKS, DEFAULT_TASKS };
+  // 🤝 Co-op tasks (Teams only): two crewmates have to do them together.
+  // The Two-Key Vault has two locks in different rooms (x2, y2 is the second one).
+  const coopTypes = [
+    { id: 'sail',  name: 'Hoist the Mainsail', place: 'the Mainsail',   icon: '⛵', coop: true, how: 'Both hold your crank' },
+    { id: 'pump',  name: 'Pump the Bilge',     place: 'the Bilge Pump', icon: '🪣', coop: true, how: 'Take turns pumping' },
+    { id: 'vault', name: 'Two-Key Vault',      place: 'the Vault',      icon: '🏦', coop: true, how: 'Turn both keys in time' },
+  ];
+  const coopStations = [
+    { type: 'sail',  x: 1200, y: 610 },                        // Main Deck, at the mast
+    { type: 'pump',  x: 420,  y: 1280 },                       // Cargo Hold
+    { type: 'vault', x: 1650, y: 1130, x2: 140, y2: 290 },     // Treasure Vault + Captain's Cabin
+  ];
+  const COOP = {
+    SAIL_UP_MS: 4000,     // both holding: empty to full
+    SAIL_DOWN_MS: 6000,   // nobody (or one) holding: full to empty
+    PUMPS: 10,            // pumps in total, taking turns
+    JAM_MS: 1000,         // pumping out of turn
+    VAULT_MS: 6000,       // the second key must turn this soon after the first
+    SOLO_VAULT_MS: 25000, // a crew of one runs between the locks
+    REMIND_MS: 20000,     // unanswered call: buzz the crew once more
+    COOLDOWN_MS: 5000,    // after cancelling a call
+  };
+
+  return { types, stations, USE_DIST, MIN_TASKS, MAX_TASKS, DEFAULT_TASKS, coopTypes, coopStations, COOP };
 });
