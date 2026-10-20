@@ -32,7 +32,8 @@ const KEY_MS = 30000;
 const KEY_TRIPS = 3;
 const HATCH_MAX_MS = 5000;
 // A player whose connection drops is kept this long so they can rejoin.
-const RECONNECT_GRACE_MS = 45000;
+// (tests shorten this with the MR_RECONNECT_GRACE_MS environment variable)
+const RECONNECT_GRACE_MS = Number(process.env.MR_RECONNECT_GRACE_MS) || 45000;
 
 // Drop weights. Players who are behind get better odds of the strong ones.
 const WEIGHTS = { anchor: 18, slime: 18, parrot: 18, rum: 16, net: 12, wind: 14, alarm: 10, fog: 10, coin: 10, storm: 8, wave: 2 };

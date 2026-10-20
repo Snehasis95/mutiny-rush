@@ -169,9 +169,27 @@ function lanIp() {
   return found.find(a => a.startsWith('192.168.')) || found.find(a => a.startsWith('10.')) || found[0] || null;
 }
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log('\nMutiny Rush server running');
-  console.log(`   On this PC:        http://localhost:${PORT}`);
-  if (lanIp()) console.log(`   Phones (same Wi-Fi): http://${lanIp()}:${PORT}`);
-  console.log('');
-});
+// Starts listening. Tests call this with port 0 to get a free port.
+function start(port = PORT) {
+  return new Promise(resolve => {
+    server.listen(port, '0.0.0.0', () => resolve(server.address().port));
+  });
+}
+
+function stop() {
+  for (const room of rooms.values()) room.stopTimers();
+  io.close();
+  return new Promise(resolve => server.close(() => resolve()));
+}
+
+module.exports = { start, stop, rooms };
+
+// "npm start" / "node server/index.js" runs the game; tests just require this file.
+if (require.main === module) {
+  start().then(port => {
+    console.log('\nMutiny Rush server running');
+    console.log(`   On this PC:        http://localhost:${port}`);
+    if (lanIp()) console.log(`   Phones (same Wi-Fi): http://${lanIp()}:${port}`);
+    console.log('');
+  });
+}
