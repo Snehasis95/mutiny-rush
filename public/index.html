@@ -72,11 +72,6 @@
           <button id="optionsBtn" class="btn btn-small options-btn">⚙️ Game options</button>
         </div>
       </div>
-      <div class="lobby-actions">
-        <button id="leaveBtn" class="btn btn-ghost">Leave</button>
-        <button id="startBtn" class="btn btn-go">Set Sail!</button>
-        <p id="waitMsg" class="hint">Waiting for the captain to start…</p>
-      </div>
     </div>
   </section>
 
@@ -85,13 +80,14 @@
     <canvas id="canvas"></canvas>
     <div class="hud">
       <div class="hud-left">
-        <button id="crewBtn" class="hud-btn crew-btn hidden" aria-label="Open the lobby"><span class="crew-anchor">⚓</span> <span id="crewBtnCode"></span> · 👥 <span id="crewBtnCount"></span></button>
+        <button id="crewBtn" class="hud-btn crew-btn hidden" aria-label="Open the lobby"><span class="crew-anchor">⚓</span> Crew &amp; Options · 👥 <span id="crewBtnCount"></span></button>
         <button id="tasksBtn" class="hud-btn" aria-expanded="false">📋 <span id="taskCount">0/6</span></button>
         <ul id="taskList" class="task-list"></ul>
       </div>
       <div class="hud-right">
         <button id="mapBtn" class="btn-icon" aria-label="Ship map">🗺️</button>
         <button id="playersBtn" class="btn-icon" aria-label="Players">🏆<span id="playersBadge" class="badge hidden"></span></button>
+        <div id="codeChip" class="hud-chip code-chip hidden" aria-label="Room code"><b id="codeChipText"></b></div>
         <button id="chatBtn" class="btn-icon" aria-label="Chat">💬<span id="chatBadge" class="badge chat-badge hidden"></span></button>
         <button id="menuBtn" class="btn-icon" aria-label="Menu">☰</button>
       </div>
@@ -106,6 +102,12 @@
       <span id="pickupIcon" class="pickup-icon"></span>
       <span id="pickupTrips" class="pickup-trips hidden"></span>
     </button>
+
+    <!-- Lobby: leave or start, right on the walkable room -->
+    <div id="lobbyBar" class="lobby-bar hidden">
+      <button id="startBtn" class="btn btn-go">⛵ Set Sail!</button>
+      <p id="waitMsg" class="hud-chip">Waiting for the Captain…</p>
+    </div>
 
     <div id="countdown" class="countdown hidden"></div>
 

@@ -714,6 +714,26 @@ input:focus { border-color: var(--wood); }
 .crew-btn .crew-anchor { color: #ffd23c; }
 @media (max-height: 430px) { .crew-btn { font-size: 16px; padding: 7px 12px; } }
 
+/* Room code beside the chat button (lobby only) */
+.code-chip { height: 46px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 12px; }
+.code-chip.hidden { display: none; }
+.code-chip b { color: #ffd23c; font-size: 20px; letter-spacing: 2px; }
+
+/* Leave / Set Sail, bottom-right of the walkable lobby (where USE sits in a race) */
+.lobby-bar {
+  position: absolute; z-index: 5;
+  right: calc(16px + var(--safe-r)); bottom: calc(16px + var(--safe-b));
+  display: flex; align-items: center; gap: 10px;
+}
+.lobby-bar.hidden { display: none; }
+.lobby-bar .btn { width: auto; font-size: 17px; padding: 10px 16px; }
+.lobby-bar #startBtn { font-size: 21px; padding: 12px 22px; }
+.lobby-bar #waitMsg { margin: 0; font-size: 14px; }
+@media (max-height: 430px) {
+  .lobby-bar .btn { font-size: 15px; padding: 8px 12px; }
+  .lobby-bar #startBtn { font-size: 18px; padding: 10px 16px; }
+}
+
 /* ---------- Chat ---------- */
 .chat-badge { width: auto; min-width: 18px; height: 18px; padding: 0 4px; font-size: 11px; font-weight: 700; color: #fff; line-height: 14px; text-align: center; }
 .chat-panel {

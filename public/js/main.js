@@ -418,6 +418,8 @@
     const lobby = mode === 'lobby';
     for (const id of ['#tasksBtn', '#mapBtn', '#playersBtn', '#useBtn', '#pickupBtn']) $(id).classList.toggle('hidden', lobby);
     $('#crewBtn').classList.toggle('hidden', !lobby);
+    $('#lobbyBar').classList.toggle('hidden', !lobby);
+    $('#codeChip').classList.toggle('hidden', !lobby);
     if (lobby) {
       $('#taskList').classList.add('hidden');
       $('#eventBanner').classList.add('hidden');
@@ -430,11 +432,10 @@
 
   function updateCrewBtn() {
     if (!S.room) return;
-    $('#crewBtnCode').textContent = S.room.code;
+    $('#codeChipText').textContent = S.room.code;
     $('#crewBtnCount').textContent = `${S.room.players.length}/6`;
   }
 
-  $('#leaveBtn').addEventListener('click', leaveRoom);
 
   function shareLink() {
     const base = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') && S.lanUrl
@@ -678,7 +679,7 @@
     showScreen('game');
     if (!lobbyHintShown) {
       lobbyHintShown = true;
-      toast(`Walk around the ship's quarters! Tap ⚓ ${room.code} to see the crew and set sail.`, 4000);
+      toast(`Walk around the ship's quarters! Tap ⚓ Crew & Options to invite friends and pick your look.`, 4000);
     }
     if (!MR.Render.isLobbyReady()) {
       if (document.fonts) {
