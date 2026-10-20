@@ -424,11 +424,21 @@ class Room {
     };
   }
 
-  // Blocks some doorways, but every room keeps a way out and the ship stays connected.
+  // Blocks some doorways spread around the ship, but every room keeps a way out
+  // and the ship stays connected.
   pickKrakenDoors() {
     const doors = map.doors;
-    for (let tries = 0; tries < 100; tries++) {
-      const chosen = doors.slice().sort(() => Math.random() - 0.5).slice(0, eventsDef.KRAKEN_DOORS);
+    const side = d => (d.x < 900 ? 'left' : d.x > 1500 ? 'right' : 'middle');
+    for (let tries = 0; tries < 200; tries++) {
+      // Proper (Fisher-Yates) shuffle so every doorway has the same chance
+      const order = doors.slice();
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      const chosen = order.slice(0, eventsDef.KRAKEN_DOORS);
+      // Not all on one side of the ship
+      if (new Set(chosen.map(side)).size < 2) continue;
       const open = doors.filter(d => !chosen.includes(d));
       const seen = new Set(['deck']);
       const queue = ['deck'];
