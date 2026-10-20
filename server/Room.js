@@ -272,6 +272,20 @@ class Room {
     }
   }
 
+  // The Captain removes someone from the lobby (never during a race). They can join again with the code.
+  // Returns an error or null.
+  kick(byId, targetId) {
+    if (byId !== this.hostId) return 'Only the Captain can do that.';
+    if (this.state !== 'lobby') return 'You can only remove pirates in the lobby.';
+    const p = this.players.get(targetId);
+    if (!p || p.isBot || p.id === byId) return 'You can\'t remove that pirate.';
+    this.toPlayer(p, 'kicked', {});
+    if (p.socketId && this.io.in) this.io.in(p.socketId).socketsLeave(this.code);
+    this.removePlayer(p.id);
+    this.io.to(this.code).emit('notice', { text: `${p.name} was removed by the Captain` });
+    return null;
+  }
+
   findByToken(token) {
     return [...this.players.values()].find(p => p.token === token) || null;
   }

@@ -113,6 +113,25 @@ test('Captain can send a pirate to the other crew, or swap two when both are ful
   r2.room.stopTimers();
 });
 
+test('Captain can kick a player in the lobby (not bots, not themselves, not mid-race); they can rejoin', () => {
+  const { room, io } = makeRoom(['A', 'B', 'C'], { options: { botCount: 1 } });
+  const bot = [...room.players.values()].find(p => p.isBot);
+  assert.equal(room.kick('B', 'C'), 'Only the Captain can do that.');
+  assert.ok(room.kick('A', 'A'), 'kicked themselves');
+  assert.ok(room.kick('A', bot.id), 'kicked a bot');
+  assert.equal(room.kick('A', 'B'), null);
+  assert.ok(!room.players.has('B'));
+  assert.ok(io.sent.some(s => s.id === 'B' && s.ev === 'kicked'), 'B was not told');
+  assert.match(io.last('TEST', 'notice').data.text, /B was removed/);
+  assert.equal(room.joinError(), null, 'B cannot come back');
+  room.addPlayer('B', 'B', 'token-B-again-0123456789', 'B');
+  assert.ok(room.players.has('B'));
+  room.start('A');
+  assert.equal(room.kick('A', 'C'), 'You can only remove pirates in the lobby.');
+  assert.ok(room.players.has('C'));
+  room.stopTimers();
+});
+
 test('cannot start with an empty crew', () => {
   const { room, io } = makeRoom(['A'], { options: { mode: 'team' } });
   room.start('A');

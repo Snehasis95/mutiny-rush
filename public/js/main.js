@@ -187,6 +187,7 @@
         }
       }
       li.append(dot, name, tag);
+      if (isHost) tapForMenu(li, p);
       return li;
     }));
 
@@ -211,6 +212,38 @@
     // Everyone can open Game options; only the Captain can change anything in it.
     renderOptionsPanel();
   }
+
+  // Captain only: tap a player's name for a small menu with Kick (bots go with the Bots option).
+  const playerMenu = $('#playerMenu');
+  let menuFor = null;
+  function tapForMenu(li, p) {
+    if (p.isBot || p.id === S.myId) return;
+    li.classList.add('tappable');
+    li.setAttribute('role', 'button');
+    li.setAttribute('aria-label', `Options for ${p.name}`);
+    li.addEventListener('click', e => {
+      if (e.target.closest('button')) return; // the crew arrows have their own job
+      e.stopPropagation();
+      openPlayerMenu(p, li);
+    });
+  }
+  function openPlayerMenu(p, li) {
+    menuFor = p.id;
+    $('#pmName').textContent = p.name;
+    playerMenu.classList.remove('hidden');
+    // Just below the name, kept on screen
+    const r = li.getBoundingClientRect(), m = playerMenu.getBoundingClientRect();
+    const x = Math.min(Math.max(8, r.left + 12), window.innerWidth - m.width - 8);
+    const y = r.bottom + 4 + m.height > window.innerHeight - 8 ? r.top - m.height - 4 : r.bottom + 4;
+    playerMenu.style.left = `${x}px`;
+    playerMenu.style.top = `${y}px`;
+  }
+  const closePlayerMenu = () => { menuFor = null; playerMenu.classList.add('hidden'); };
+  $('#pmKick').addEventListener('click', () => {
+    if (menuFor) socket.emit('kick', menuFor);
+    closePlayerMenu();
+  });
+  document.addEventListener('click', e => { if (menuFor && !playerMenu.contains(e.target)) closePlayerMenu(); });
 
   // ---------- crews (team mode) ----------
   let swapPick = null; // Captain's first pick when swapping between two full crews
@@ -253,7 +286,10 @@
         nm.className = 'crew-name';
         nm.textContent = p.name + (p.id === room.hostId ? ' 👑' : '') + (p.parrot ? ' 🦜' : '');
         li.append(dot, nm);
-        if (isHost) li.appendChild(moveButton(p, id, otherMembers));
+        if (isHost) {
+          li.appendChild(moveButton(p, id, otherMembers));
+          tapForMenu(li, p);
+        }
         ul.appendChild(li);
       }
       box.append(head, ul);
@@ -1438,6 +1474,15 @@
   });
 
   socket.on('notice', ({ text }) => toast(text, 2500));
+
+  // The Captain removed me from the lobby: back to the home screen (I can join again with the code).
+  socket.on('kicked', () => {
+    const code = S.room && S.room.code;
+    leaveRoom();
+    if (code) codeInput.value = code;
+    setHomeError('The Captain removed you from the room.');
+    toast('The Captain removed you from the room. You can join again with the code.', 4500);
+  });
 
   // ---------- 🤝 co-op tasks: the live game, the crew's calls ----------
   socket.on('coop', st => {
