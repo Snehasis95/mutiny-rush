@@ -197,14 +197,8 @@
     $('#startBtn').classList.toggle('hidden', !isHost);
     $('#waitMsg').classList.toggle('hidden', isHost);
 
-    // Game options: everyone sees a summary; only the Captain gets the ⚙️ button.
-    const o = room.options;
-    const botsHere = room.players.filter(p => p.isBot).length; // real number (bots give up seats to people)
-    const botText = botsHere ? `🤖 ${botsHere} ${BOT_LEVELS[o.botLevel]} bot${botsHere === 1 ? '' : 's'}` : '🤖 No bots';
-    const modeText = o.mode === 'team' ? '👥 Teams' : '🏁 Solo';
-    $('#optionsSummary').textContent = `${modeText} · 🎯 Arrows ${o.taskArrows ? 'on' : 'off'} · 🌊 Events ${o.events ? 'on' : 'off'} · 📋 ${o.taskCount} tasks${o.mode === 'team' ? ' each' : ''} · ${botText}`;
-    $('#optionsNote').textContent = isHost ? '' : 'Set by the Captain';
-    $('#optionsBtn').classList.toggle('hidden', !isHost);
+    // Game options: only the Captain can change them, so only the Captain gets the button.
+    // Everyone can open Game options; only the Captain can change anything in it.
     renderOptionsPanel();
   }
 
@@ -330,7 +324,9 @@
   function renderOptionsPanel() {
     if (!S.room) return;
     const isHost = S.room.hostId === S.myId;
-    if (!isHost) optionsPanel.classList.add('hidden'); // lost the Captain role
+    // Other players get a view-only panel
+    optionsPanel.classList.toggle('view-only', !isHost);
+    $('#optionsViewNote').classList.toggle('hidden', isHost);
     const o = S.room.options;
     optionsPanel.querySelectorAll('input[data-option]').forEach(inp => { inp.checked = !!o[inp.dataset.option]; });
     $('#taskCountValue').textContent = o.taskCount;
@@ -351,6 +347,11 @@
       btn.classList.toggle('on', on);
       btn.setAttribute('aria-checked', String(on));
     });
+    if (!isHost) {
+      optionsPanel.querySelectorAll('input[data-option], .step-btn, .seg-btn').forEach(el => { el.disabled = true; });
+    } else {
+      optionsPanel.querySelectorAll('input[data-option], .seg-btn').forEach(el => { el.disabled = false; });
+    }
   }
 
   $('#optionsBtn').addEventListener('click', () => {

@@ -683,3 +683,21 @@ input:focus { border-color: var(--wood); }
   .results-panel { padding: 10px 16px 12px; }
   .winner { margin: 0 0 4px; }
 }
+
+/* ---------- Lobby: wider crew list, colours + buttons on the right ---------- */
+.lobby-cols { grid-template-columns: 3fr 2fr; }
+.lobby-cols .color-grid { grid-template-columns: repeat(4, minmax(0, 46px)); gap: 8px; justify-content: start; }
+.lobby-cols .options-btn { display: block; width: 100%; margin-top: 12px; font-size: 16px; padding: 8px 12px; }
+@media (max-width: 520px) { .lobby-cols { grid-template-columns: 1fr; } }
+@media (max-height: 430px) {
+  .lobby-cols .color-grid { grid-template-columns: repeat(4, minmax(0, 38px)); gap: 6px; }
+  .lobby-cols .options-btn { margin-top: 10px; font-size: 15px; padding: 6px 10px; }
+  #lobby .player-list li > span:nth-child(2) { font-size: 14px; }
+}
+
+/* Game options for players who aren't the Captain: view only */
+.view-note { font-size: 13px; font-weight: 500; }
+#optionsPanel.view-only .seg-btn:disabled { cursor: default; opacity: 1; }
+#optionsPanel.view-only .seg-btn:not(.on) { opacity: .45; }
+#optionsPanel.view-only .step-btn { visibility: hidden; }
+#optionsPanel.view-only .toggle input:disabled + i { opacity: .8; }
