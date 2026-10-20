@@ -5,6 +5,7 @@ const pickupsDef = require('../shared/pickups');
 const { assign, pickTypes } = require('./taskAssign');
 const bots = require('./bots');
 const eventsDef = require('../shared/events');
+const looks = require('../shared/looks');
 
 const MAX_PLAYERS = 6;
 const COUNTDOWN_MS = 3000;
@@ -91,7 +92,7 @@ class Room {
     for (let i = have.length; i < want; i++) {
       const used = new Set([...this.players.values()].map(p => p.name));
       const name = bots.NAMES.map(n => '🤖 ' + n).find(n => !used.has(n)) || '🤖 Bot ' + (this.botSeq + 1);
-      this.addPlayer('bot-' + ++this.botSeq, null, null, name, true);
+      this.addPlayer('bot-' + ++this.botSeq, null, null, name, true, looks.random());
     }
   }
 
@@ -103,12 +104,14 @@ class Room {
   }
 
   // id: stable player id (survives reconnects). socketId: the current connection. token: secret used to rejoin.
-  addPlayer(id, socketId, token, name, isBot = false) {
+  addPlayer(id, socketId, token, name, isBot = false, look = null) {
     const used = new Set([...this.players.values()].map(p => p.color));
     const color = COLORS.find(c => !used.has(c));
     const p = {
       id, socketId, token, isBot, connected: true, dropTimer: null,
       name, color, x: map.spawn.x, y: map.spawn.y, budget: BUDGET_CAP, lastMoveAt: 0, tasks: [],
+      ...looks.clean(look),
+      parrot: false, // 🦜 the last winner in this room
     };
     this.resetPlayer(p);
     if (!isBot && this.humans().length + [...this.players.values()].filter(q => q.isBot).length >= MAX_PLAYERS) {
@@ -221,6 +224,13 @@ class Room {
     this.broadcast();
   }
 
+  setLook(id, look) {
+    const p = this.players.get(id);
+    if (!p || this.state !== 'lobby') return;
+    Object.assign(p, looks.clean(look));
+    this.broadcast();
+  }
+
   setColor(id, color) {
     const p = this.players.get(id);
     if (!p || this.state !== 'lobby' || !COLORS.includes(color)) return;
@@ -295,6 +305,7 @@ class Room {
   end(winnerId) {
     this.stopTimers();
     this.clearEvent();
+    for (const p of this.players.values()) p.parrot = p.id === winnerId;
     this.state = 'ended';
     this.winnerId = winnerId;
     for (const p of this.players.values()) {
@@ -831,6 +842,7 @@ class Room {
       taskCount: this.options.taskCount,
       players: players.map(p => ({
         id: p.id, name: p.name, color: p.color, x: p.x, y: p.y, connected: p.connected, isBot: !!p.isBot,
+        hat: p.hat, eyes: p.eyes, parrot: p.parrot,
         done: this.doneCount(p),
         status: this.statusOf(p, now),
         // Why each sabotage can't target this player (for the target picker).

@@ -73,7 +73,7 @@ io.on('connection', socket => {
     leave();
     const id = crypto.randomBytes(6).toString('hex');
     bind(r, id);
-    r.addPlayer(id, socket.id, token, cleanName(data && data.name));
+    r.addPlayer(id, socket.id, token, cleanName(data && data.name), false, data && data.look);
     return { ok: true, code: r.code };
   }
 
@@ -113,6 +113,7 @@ io.on('connection', socket => {
   });
 
   socket.on('setColor', color => active() && room.setColor(pid, color));
+  socket.on('setLook', look => active() && room.setLook(pid, look));
   socket.on('setOption', data => data && active() && room.setOption(pid, data.key, data.value));
   socket.on('startGame', () => active() && room.start(pid));
   socket.on('backToLobby', () => active() && room.backToLobby(pid));

@@ -330,6 +330,143 @@ MR.Render = (() => {
     }
   }
 
+  // ---------- cosmetics (drawn in the pirate's own coordinates: body is -22..22, -24..24) ----------
+  function drawEyes(g, eyes) {
+    const eye = (x, y) => {
+      g.fillStyle = '#fff';
+      g.beginPath(); g.arc(x, y, 7, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#111';
+      g.beginPath(); g.arc(x + 2, y, 3.5, 0, Math.PI * 2); g.fill();
+    };
+    if (eyes === 'patch') {
+      eye(9, -6);
+      g.strokeStyle = '#111'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(-22, -16); g.lineTo(18, -2); g.stroke();
+      g.fillStyle = '#111';
+      g.beginPath(); g.ellipse(-7, -8, 6, 5, 0, 0, Math.PI * 2); g.fill();
+      return;
+    }
+    eye(-6, -6);
+    eye(10, -6);
+    if (eyes === 'monocle') {
+      g.strokeStyle = '#d4a017'; g.lineWidth = 2.5;
+      g.beginPath(); g.arc(10, -6, 9, 0, Math.PI * 2); g.stroke();
+      g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(17, 0); g.quadraticCurveTo(22, 10, 16, 16); g.stroke(); // chain
+      g.fillStyle = 'rgba(200,230,255,.35)';
+      g.beginPath(); g.arc(10, -6, 8, 0, Math.PI * 2); g.fill();
+    }
+  }
+
+  function drawHat(g, hat) {
+    g.lineJoin = 'round';
+    switch (hat) {
+      case 'bandana':
+      case 'skull': {
+        const cloth = hat === 'skull' ? '#1e1e1e' : '#c0392b';
+        g.fillStyle = cloth;
+        g.beginPath();
+        g.moveTo(-23, -10);
+        g.quadraticCurveTo(-22, -30, 0, -31);
+        g.quadraticCurveTo(22, -30, 23, -10);
+        g.quadraticCurveTo(0, -18, -23, -10);
+        g.fill();
+        // Knot and tails at the back
+        g.beginPath(); g.arc(-22, -14, 4, 0, Math.PI * 2); g.fill();
+        g.beginPath(); g.moveTo(-23, -14); g.lineTo(-34, -6); g.lineTo(-30, -2); g.closePath(); g.fill();
+        g.beginPath(); g.moveTo(-23, -13); g.lineTo(-31, -18); g.lineTo(-34, -13); g.closePath(); g.fill();
+        if (hat === 'skull') {
+          g.fillStyle = '#fff';
+          g.beginPath(); g.arc(2, -23, 4.5, 0, Math.PI * 2); g.fill();
+          g.fillRect(-0.5, -20, 5, 3);
+          g.fillStyle = '#1e1e1e';
+          g.beginPath(); g.arc(0.5, -23.5, 1.2, 0, Math.PI * 2); g.arc(3.5, -23.5, 1.2, 0, Math.PI * 2); g.fill();
+        } else {
+          g.fillStyle = 'rgba(255,255,255,.85)';
+          for (const [x, y] of [[-12, -22], [-2, -26], [9, -24], [16, -18], [-16, -15], [4, -18]]) {
+            g.beginPath(); g.arc(x, y, 1.6, 0, Math.PI * 2); g.fill();
+          }
+        }
+        return;
+      }
+      case 'captain': {
+        // Bicorne with gold trim and a feather
+        g.fillStyle = '#f2f2f2';
+        g.beginPath(); g.ellipse(-12, -40, 4, 14, -0.6, 0, Math.PI * 2); g.fill();
+        g.fillStyle = '#1b2a4a';
+        g.beginPath();
+        g.moveTo(-32, -18);
+        g.quadraticCurveTo(-16, -50, 0, -46);
+        g.quadraticCurveTo(16, -50, 32, -18);
+        g.quadraticCurveTo(0, -30, -32, -18);
+        g.fill();
+        g.strokeStyle = '#d4a017'; g.lineWidth = 3;
+        g.beginPath(); g.moveTo(-30, -19); g.quadraticCurveTo(0, -31, 30, -19); g.stroke();
+        g.fillStyle = '#d4a017';
+        g.beginPath(); g.arc(0, -33, 4, 0, Math.PI * 2); g.fill();
+        return;
+      }
+      case 'straw': {
+        g.fillStyle = '#e8c872';
+        g.strokeStyle = '#a8842c'; g.lineWidth = 2;
+        g.beginPath(); g.ellipse(0, -20, 34, 8, 0, 0, Math.PI * 2); g.fill(); g.stroke(); // brim
+        g.beginPath(); g.ellipse(0, -28, 17, 12, 0, Math.PI, Math.PI * 2); g.fill(); g.stroke(); // crown
+        g.fillStyle = '#c0392b';
+        g.fillRect(-17, -25, 34, 4); // band
+        return;
+      }
+      case 'beanie': {
+        g.fillStyle = '#2c5aa0';
+        g.beginPath(); g.ellipse(0, -18, 22, 18, 0, Math.PI, Math.PI * 2); g.fill();
+        g.fillStyle = '#244a85';
+        g.fillRect(-23, -21, 46, 7); // ribbed fold
+        g.strokeStyle = 'rgba(255,255,255,.2)'; g.lineWidth = 1.5;
+        for (let x = -18; x <= 18; x += 6) { g.beginPath(); g.moveTo(x, -21); g.lineTo(x, -14); g.stroke(); }
+        g.fillStyle = '#f2f2f2';
+        g.beginPath(); g.arc(0, -38, 6, 0, Math.PI * 2); g.fill(); // pom-pom
+        return;
+      }
+      default: {
+        // Tricorn
+        g.fillStyle = '#1e1e1e';
+        g.beginPath();
+        g.moveTo(-28, -20);
+        g.quadraticCurveTo(-18, -30, -12, -40);
+        g.quadraticCurveTo(0, -50, 12, -40);
+        g.quadraticCurveTo(18, -30, 28, -20);
+        g.quadraticCurveTo(0, -28, -28, -20);
+        g.fill();
+        g.strokeStyle = '#d4a017'; g.lineWidth = 2;
+        g.beginPath(); g.moveTo(-24, -21); g.quadraticCurveTo(0, -29, 24, -21); g.stroke();
+        g.fillStyle = '#fff';
+        g.beginPath(); g.arc(0, -36, 3.5, 0, Math.PI * 2); g.fill();
+      }
+    }
+  }
+
+  // 🦜 The last winner's parrot, perched on the shoulder and bobbing.
+  function drawParrot(g, t) {
+    const hop = Math.abs(Math.sin(t * 3)) * 2;
+    g.save();
+    g.translate(-25, -4 - hop); // on the shoulder, clear of any hat brim
+    g.scale(1.3, 1.3);
+    g.fillStyle = '#c0392b';                                       // tail
+    g.beginPath(); g.moveTo(-4, 6); g.lineTo(-10, 18); g.lineTo(-2, 14); g.closePath(); g.fill();
+    g.fillStyle = '#27ae60';                                       // body
+    g.beginPath(); g.ellipse(0, 2, 7, 10, 0.2, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#2ecc71';                                       // wing
+    g.beginPath(); g.ellipse(-3, 4, 4, 7, 0.4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#e74c3c';                                       // head
+    g.beginPath(); g.arc(2, -8, 6, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#f1c40f';                                       // beak
+    g.beginPath(); g.moveTo(7, -9); g.quadraticCurveTo(12, -7, 7, -4); g.closePath(); g.fill();
+    g.fillStyle = '#fff';
+    g.beginPath(); g.arc(3.5, -9.5, 2, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#111';
+    g.beginPath(); g.arc(4, -9.5, 1, 0, Math.PI * 2); g.fill();
+    g.restore();
+  }
+
   function drawPirate(g, p, t) {
     if ((p.status || []).includes('offline')) {
       // Faded while their connection is down
@@ -372,28 +509,9 @@ MR.Render = (() => {
     g.fillStyle = 'rgba(255,255,255,.25)';
     g.beginPath(); g.ellipse(-8, 6, 6, 10, 0.3, 0, Math.PI * 2); g.fill();
 
-    // Eye + eyepatch
-    g.fillStyle = '#fff';
-    g.beginPath(); g.arc(9, -6, 7, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#111';
-    g.beginPath(); g.arc(11, -6, 3.5, 0, Math.PI * 2); g.fill();
-    g.strokeStyle = '#111'; g.lineWidth = 2;
-    g.beginPath(); g.moveTo(-22, -16); g.lineTo(18, -2); g.stroke();
-    g.beginPath(); g.ellipse(-7, -8, 6, 5, 0, 0, Math.PI * 2); g.fill();
-
-    // Tricorn hat
-    g.fillStyle = '#1e1e1e';
-    g.beginPath();
-    g.moveTo(-28, -20);
-    g.quadraticCurveTo(-18, -30, -12, -40);
-    g.quadraticCurveTo(0, -50, 12, -40);
-    g.quadraticCurveTo(18, -30, 28, -20);
-    g.quadraticCurveTo(0, -28, -28, -20);
-    g.fill();
-    g.strokeStyle = '#d4a017'; g.lineWidth = 2;
-    g.beginPath(); g.moveTo(-24, -21); g.quadraticCurveTo(0, -29, 24, -21); g.stroke();
-    g.fillStyle = '#fff';
-    g.beginPath(); g.arc(0, -36, 3.5, 0, Math.PI * 2); g.fill();
+    drawEyes(g, p.eyes || 'patch');
+    drawHat(g, p.hat || 'tricorn');
+    if (p.parrot) drawParrot(g, t);
 
     if (status.includes('slime')) {
       // Dripping slime on the body

@@ -62,7 +62,10 @@
           <ul id="playerList" class="player-list"></ul>
         </div>
         <div>
-          <h2>Your color</h2>
+          <div class="color-head">
+            <h2>Your color</h2>
+            <button id="lookBtn" class="btn btn-small look-btn">🎩 Look</button>
+          </div>
           <div id="colorGrid" class="color-grid"></div>
           <div class="game-options">
             <div class="options-row">
@@ -182,6 +185,7 @@
       <div class="panel results-panel">
         <div class="results-flag">🏴‍☠️</div>
         <h2 id="winnerText" class="winner"></h2>
+        <p id="parrotText" class="parrot-text"></p>
         <ul id="resultsList" class="rank-list"></ul>
         <div class="results-actions">
           <button id="resultsLeave" class="btn btn-ghost">Leave</button>
@@ -205,6 +209,26 @@
       <p>Turn your phone sideways to play</p>
     </div>
   </section>
+
+  <!-- Your look: hat + face, with a live preview -->
+  <div id="lookPanel" class="overlay settings-overlay hidden">
+    <div class="panel look-panel">
+      <div class="panel-head">
+        <h2>🎩 Your look</h2>
+        <button id="lookClose" class="btn-icon dark" aria-label="Close">✕</button>
+      </div>
+      <div class="look-body">
+        <canvas id="lookPreview" class="look-preview" width="140" height="160" aria-label="Your pirate"></canvas>
+        <div class="look-options">
+          <div class="look-label">Hat</div>
+          <div id="hatChoices" class="look-grid"></div>
+          <div class="look-label">Face</div>
+          <div id="eyeChoices" class="look-grid"></div>
+        </div>
+      </div>
+      <button id="lookDone" class="btn btn-go">Done</button>
+    </div>
+  </div>
 
   <!-- Game options (Captain only, from the lobby) -->
   <div id="optionsPanel" class="overlay settings-overlay hidden">
@@ -277,6 +301,7 @@
   <script src="/shared/tasks.js"></script>
   <script src="/shared/pickups.js"></script>
   <script src="/shared/events.js"></script>
+  <script src="/shared/looks.js"></script>
   <script src="js/settings.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/touch.js"></script>

@@ -61,6 +61,7 @@
   const TASKS = MR.Shared.tasks;
   const PICKUPS = MR.Shared.pickups;
   const EVENTS = MR.Shared.events;
+  const LOOKS = MR.Shared.looks;
   const eventInfo = new Map(EVENTS.types.map(t => [t.id, t]));
   const MAP = MR.Shared.map;
   const typeInfo = new Map(TASKS.types.map(t => [t.id, t]));
@@ -100,6 +101,10 @@
   const urlRoom = new URLSearchParams(location.search).get('room');
   if (urlRoom) codeInput.value = urlRoom.toUpperCase().slice(0, 4);
 
+  function myLook() {
+    try { return LOOKS.clean(JSON.parse(store.get('mr-look') || 'null')); } catch { return { ...LOOKS.DEFAULT }; }
+  }
+
   function myName() {
     const n = nameInput.value.trim().slice(0, 12);
     store.set('mr-name', n);
@@ -110,7 +115,7 @@
 
   $('#createBtn').addEventListener('click', () => {
     setHomeError('');
-    socket.emit('createRoom', { name: myName(), token: session.token() }, res => {
+    socket.emit('createRoom', { name: myName(), token: session.token(), look: myLook() }, res => {
       if (!res.ok) setHomeError(res.error);
     });
   });
@@ -119,7 +124,7 @@
     setHomeError('');
     const code = codeInput.value.trim().toUpperCase();
     if (code.length !== 4) return setHomeError('Enter the 4-letter room code.');
-    socket.emit('joinRoom', { code, name: myName(), token: session.token() }, res => {
+    socket.emit('joinRoom', { code, name: myName(), token: session.token(), look: myLook() }, res => {
       if (!res.ok) setHomeError(res.error);
     });
   }
@@ -152,6 +157,7 @@
         p.isBot && ['', 'Bot'],
         p.connected === false && ['📴', '📴 reconnecting'],
         p.id === room.hostId && ['👑', '👑 Captain'],
+        p.parrot && ['🦜', '🦜'],
         p.id === S.myId && ['', '(you)'],
       ].filter(Boolean);
       for (const [short, long] of labels) {
@@ -194,6 +200,71 @@
     $('#optionsBtn').classList.toggle('hidden', !isHost);
     renderOptionsPanel();
   }
+
+  // ---------- your look (hat + face) ----------
+  const lookPanel = $('#lookPanel');
+  let lookRaf = 0;
+
+  function myColor() {
+    const me = S.room && S.room.players.find(p => p.id === S.myId);
+    return me ? me.color : '#e74c3c';
+  }
+
+  // Draws a pirate wearing a look into a small canvas (used for the preview and the choices).
+  function paintPirate(canvas, look, t, scale) {
+    const g = canvas.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    g.translate(canvas.width / 2, canvas.height * 0.62);
+    g.scale(scale, scale);
+    MR.Render.drawPirate(g, { x: 0, y: 0, color: myColor(), face: 1, walk: 0, moving: false, name: '', ...look }, t);
+  }
+
+  function choiceButton(kind, opt, look) {
+    const b = document.createElement('button');
+    b.className = 'look-choice' + (look[kind] === opt.id ? ' on' : '');
+    b.setAttribute('aria-label', opt.name);
+    b.setAttribute('aria-pressed', String(look[kind] === opt.id));
+    const c = document.createElement('canvas');
+    c.width = 64;
+    c.height = 64;
+    paintPirate(c, { ...look, [kind]: opt.id }, 0, 0.95);
+    const label = document.createElement('span');
+    label.textContent = opt.name;
+    b.append(c, label);
+    b.addEventListener('click', () => {
+      const next = { ...myLook(), [kind]: opt.id };
+      store.set('mr-look', JSON.stringify(next));
+      socket.emit('setLook', next);
+      MR.Sfx.click();
+      renderLookChoices();
+    });
+    return b;
+  }
+
+  function renderLookChoices() {
+    const look = myLook();
+    $('#hatChoices').replaceChildren(...LOOKS.hats.map(h => choiceButton('hat', h, look)));
+    $('#eyeChoices').replaceChildren(...LOOKS.eyes.map(e => choiceButton('eyes', e, look)));
+  }
+
+  function openLook() {
+    renderLookChoices();
+    lookPanel.classList.remove('hidden');
+    const tick = now => {
+      if (lookPanel.classList.contains('hidden')) return;
+      paintPirate($('#lookPreview'), myLook(), now / 1000, 1.9);
+      lookRaf = requestAnimationFrame(tick);
+    };
+    cancelAnimationFrame(lookRaf);
+    lookRaf = requestAnimationFrame(tick);
+  }
+  const closeLook = () => lookPanel.classList.add('hidden');
+
+  $('#lookBtn').addEventListener('click', openLook);
+  $('#lookClose').addEventListener('click', closeLook);
+  $('#lookDone').addEventListener('click', closeLook);
+  lookPanel.addEventListener('click', e => { if (e.target === lookPanel) closeLook(); });
 
   // ---------- game options panel (Captain only) ----------
   const optionsPanel = $('#optionsPanel');
@@ -505,6 +576,9 @@
     $('#winnerText').textContent = winner
       ? (winner.id === S.myId ? 'You are the new Captain!' : `${winner.name} is the new Captain!`)
       : 'Game over!';
+    $('#parrotText').textContent = winner
+      ? (winner.id === S.myId ? '🦜 The parrot is yours until someone beats you!' : `🦜 ${winner.name} gets the Captain's parrot`)
+      : '';
     renderRankList($('#resultsList'));
     const isHost = S.room.hostId === S.myId;
     $('#againBtn').classList.toggle('hidden', !isHost);
@@ -1194,12 +1268,12 @@
       const players = [];
       const meInfo = byId.get(S.myId);
       if (meInfo && !S.my.inHatch) {
-        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, isMe: true });
+        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, hat: meInfo.hat, eyes: meInfo.eyes, parrot: meInfo.parrot, isMe: true });
       }
       for (const [id, o] of S.others) {
         const info = byId.get(id);
         if (info && !o.hidden) {
-          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status });
+          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status, hat: info.hat, eyes: info.eyes, parrot: info.parrot });
         }
       }
       const playing = S.room.state === 'playing';
