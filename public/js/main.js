@@ -209,14 +209,19 @@
   }
 
   // ---------- crews (team mode) ----------
+  let swapPick = null; // Captain's first pick when swapping between two full crews
   function renderCrews(room, isHost) {
     const team = room.options.mode === 'team';
     $('#playerList').classList.toggle('hidden', team);
     $('#crews').classList.toggle('hidden', !team);
-    if (!team) return;
+    if (!team) { swapPick = null; return; }
     const mine = myTeam();
+    const picked = swapPick && room.players.find(p => p.id === swapPick);
+    if (!picked || !isHost) swapPick = null;
     const cols = Object.entries(TEAMS).map(([id, info]) => {
       const members = room.players.filter(p => p.team === id);
+      const otherId = Object.keys(TEAMS).find(t => t !== id);
+      const otherMembers = room.players.filter(p => p.team === otherId);
       const box = document.createElement('div');
       box.className = 'crew-box crew-' + id + (mine === id ? ' mine' : '');
       const head = document.createElement('div');
@@ -244,6 +249,7 @@
         nm.className = 'crew-name';
         nm.textContent = p.name + (p.id === room.hostId ? ' 👑' : '') + (p.parrot ? ' 🦜' : '');
         li.append(dot, nm);
+        if (isHost) li.appendChild(moveButton(p, id, otherMembers));
         ul.appendChild(li);
       }
       box.append(head, ul);
@@ -253,11 +259,52 @@
     if (isHost) {
       const sh = document.createElement('button');
       sh.className = 'btn btn-small crew-shuffle';
-      sh.textContent = '🔀 Shuffle crews';
-      sh.addEventListener('click', () => socket.emit('shuffleTeams'));
-      nodes.push(sh);
+      sh.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h4c4 0 6 10 10 10h4M18 14l3 3-3 3M3 17h4c1.6 0 2.8-1.6 3.9-3.6M13.1 9.6C14.2 8.1 15.4 7 17 7h4M18 4l3 3-3 3"/></svg>Shuffle crews';
+      sh.addEventListener('click', () => { swapPick = null; socket.emit('shuffleTeams'); });
+      const hint = document.createElement('span');
+      hint.className = 'crew-hint';
+      hint.textContent = picked
+        ? `${TEAMS[picked.team === 'red' ? 'blue' : 'red'].name} is full. Pick who swaps with ${picked.name}.`
+        : 'Tap an arrow to send a pirate to the other crew.';
+      const bar = document.createElement('div');
+      bar.className = 'crew-tools';
+      bar.append(sh, hint);
+      nodes.push(bar);
     }
     $('#crews').replaceChildren(...nodes);
+  }
+
+  // Captain: ⇄ sends a pirate to the other crew. If that crew is full of people,
+  // the first tap picks them and the second tap (on the other crew) picks who to swap with.
+  const ARROW_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M12 5.5 18.5 12 12 18.5"/></svg>';
+  const SWAP_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4"/></svg>';
+  function moveButton(p, teamId, otherMembers) {
+    const b = document.createElement('button');
+    const toId = teamId === 'red' ? 'blue' : 'red';
+    b.className = `crew-move to-${toId}`;
+    const pickedP = swapPick && S.room.players.find(q => q.id === swapPick);
+    if (pickedP && pickedP.team !== teamId) {
+      b.className = 'crew-move swap';
+      b.innerHTML = `${SWAP_SVG}<span>Swap</span>`;
+      b.setAttribute('aria-label', `Swap ${p.name} with ${pickedP.name}`);
+      b.addEventListener('click', () => {
+        socket.emit('moveTeam', { id: pickedP.id, swapWith: p.id });
+        swapPick = null;
+      });
+      return b;
+    }
+    const picked = swapPick === p.id;
+    if (picked) b.textContent = '✕';
+    else b.innerHTML = ARROW_SVG;
+    b.classList.toggle('picked', picked);
+    b.setAttribute('aria-label', picked ? 'Cancel' : `Send ${p.name} to ${TEAMS[toId].name}`);
+    b.addEventListener('click', () => {
+      if (picked) swapPick = null;
+      else if (otherMembers.length >= 3 && !otherMembers.some(q => q.isBot)) swapPick = p.id;
+      else { swapPick = null; socket.emit('moveTeam', { id: p.id }); return; }
+      renderLobby();
+    });
+    return b;
   }
 
   // ---------- your look (hat + face) ----------

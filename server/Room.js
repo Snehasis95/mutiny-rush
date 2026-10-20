@@ -117,14 +117,8 @@ class Room {
   }
 
   // Split everyone as evenly as possible (people first, so bots fill the gaps).
-  balanceTeams(shuffle = false) {
+  balanceTeams() {
     let list = [...this.players.values()];
-    if (shuffle) {
-      for (let i = list.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [list[i], list[j]] = [list[j], list[i]];
-      }
-    }
     list = list.filter(p => !p.isBot).concat(list.filter(p => p.isBot));
     for (const p of list) p.team = null;
     list.forEach((p, i) => { p.team = TEAMS[i % 2]; });
@@ -143,9 +137,36 @@ class Room {
     this.broadcast();
   }
 
+  // Captain picks the crews: send a pirate to the other crew. If that crew is full,
+  // they swap with `swapWithId` (the Captain's pick) or else with one of its bots.
+  moveToTeam(byId, id, swapWithId) {
+    const p = this.players.get(id);
+    if (byId !== this.hostId || this.state !== 'lobby' || !this.teamMode() || !p || !p.team) return 'Not allowed';
+    const to = p.team === TEAMS[0] ? TEAMS[1] : TEAMS[0];
+    const members = this.teamMembers(to);
+    const other = swapWithId ? members.find(q => q.id === swapWithId) : null;
+    if (swapWithId && !other) return 'Not in that crew';
+    if (other) other.team = p.team;
+    else if (members.length >= TEAM_MAX) {
+      const bot = members.find(q => q.isBot);
+      if (!bot) return 'That crew is full';
+      bot.team = p.team;
+    }
+    p.team = to;
+    this.broadcast();
+    return null;
+  }
+
+  // Random crews, not balanced (the Captain evens them out with the arrows). Crews still hold 3.
   shuffleTeams(byId) {
     if (byId !== this.hostId || this.state !== 'lobby' || !this.teamMode()) return;
-    this.balanceTeams(true);
+    const count = { [TEAMS[0]]: 0, [TEAMS[1]]: 0 };
+    for (const p of this.players.values()) {
+      let team = TEAMS[Math.floor(Math.random() * 2)];
+      if (count[team] >= TEAM_MAX) team = team === TEAMS[0] ? TEAMS[1] : TEAMS[0];
+      p.team = team;
+      count[team]++;
+    }
     this.broadcast();
   }
 

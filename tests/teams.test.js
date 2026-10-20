@@ -56,7 +56,7 @@ test('new pirates join the smaller crew; crews hold 3; a bot swaps out for you',
   r2.room.stopTimers();
 });
 
-test('Captain can shuffle the crews', () => {
+test('Captain can shuffle the crews: random, not balanced, never over 3', () => {
   const { room } = makeRoom(['A', 'B', 'C', 'D', 'E', 'F'], { options: { mode: 'team' } });
   const before = [...room.players.values()].map(p => p.team).join();
   let changed = false;
@@ -65,9 +65,52 @@ test('Captain can shuffle the crews', () => {
     changed = [...room.players.values()].map(p => p.team).join() !== before;
   }
   assert.ok(changed, 'shuffle never changed anything');
-  assert.equal(teamOf(room, 'red').length, 3);
+  assert.equal(teamOf(room, 'red').length, 3, '6 pirates must still split 3 v 3');
   room.shuffleTeams('B'); // guests can't
   room.stopTimers();
+
+  // With 4 pirates, uneven splits happen (the Captain evens them out by hand)
+  const r2 = makeRoom(['A', 'B', 'C', 'D'], { options: { mode: 'team' } });
+  assert.equal(teamOf(r2.room, 'red').length, 2, 'not balanced at first');
+  const sizes = new Set();
+  for (let i = 0; i < 60; i++) {
+    r2.room.shuffleTeams('A');
+    const red = teamOf(r2.room, 'red').length;
+    assert.ok(red >= 1 && red <= 3, `bad split: ${red} v ${4 - red}`);
+    sizes.add(red);
+  }
+  assert.ok(sizes.has(1) || sizes.has(3), 'shuffle always balanced the crews');
+  r2.room.stopTimers();
+});
+
+test('Captain can send a pirate to the other crew, or swap two when both are full', () => {
+  const { room } = makeRoom(['A', 'B', 'C', 'D'], { options: { mode: 'team' } }); // red: A, C  blue: B, D
+  const team = id => room.players.get(id).team;
+  assert.equal(room.moveToTeam('B', 'A'), 'Not allowed', 'a guest moved someone');
+  assert.equal(team('A'), 'red');
+  assert.equal(room.moveToTeam('A', 'C'), null);
+  assert.equal(team('C'), 'blue');
+  assert.equal(teamOf(room, 'blue').length, 3);
+  // Blue is now full of people: a plain move is refused, a picked swap works
+  assert.equal(room.moveToTeam('A', 'A'), 'That crew is full');
+  assert.equal(room.moveToTeam('A', 'A', 'D'), null);
+  assert.equal(team('A'), 'blue');
+  assert.equal(team('D'), 'red');
+  assert.equal(room.moveToTeam('A', 'D', 'X'), 'Not in that crew');
+  // A full crew with a bot: the bot swaps out
+  const r2 = makeRoom(['H', 'G'], { options: { mode: 'team', botCount: 4 } });
+  const g = r2.room.players.get('G'), h = r2.room.players.get('H');
+  const to = g.team === 'red' ? 'blue' : 'red';
+  assert.equal(r2.room.moveToTeam('H', 'G'), null);
+  assert.equal(g.team, to);
+  assert.equal(teamOf(r2.room, 'red').length, 3);
+  assert.equal(teamOf(r2.room, 'blue').length, 3);
+  assert.ok(h.team);
+  // Not during a race, not in solo mode
+  r2.room.setOption('H', 'mode', 'solo');
+  assert.equal(r2.room.moveToTeam('H', 'G'), 'Not allowed');
+  room.stopTimers();
+  r2.room.stopTimers();
 });
 
 test('cannot start with an empty crew', () => {
