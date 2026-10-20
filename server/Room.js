@@ -6,6 +6,8 @@ const { assign, pickTypes } = require('./taskAssign');
 const bots = require('./bots');
 const eventsDef = require('../shared/events');
 const looks = require('../shared/looks');
+const lobbyMap = require('../shared/lobbyMap');
+const lobbyPhysics = physics.create(lobbyMap); // walking around the lobby room
 
 const MAX_PLAYERS = 6;
 const TEAMS = ['red', 'blue'];
@@ -81,6 +83,8 @@ class Room {
     this.lastEventId = null;
     this.nextEventAt = 0;
     this.blockers = [];     // temporary walls (Kraken tentacles)
+    this.lobbyTimer = null;
+    this.startLobbyTimer();
   }
 
   humans() {
@@ -190,6 +194,7 @@ class Room {
       if (bot) this.players.delete(bot.id);
     }
     if (this.teamMode()) p.team = this.smallerTeam();
+    if (this.state === 'lobby') Object.assign(p, this.lobbySpot());
     this.players.set(id, p);
     if (!this.hostId && !isBot) this.hostId = id;
     if (!isBot) this.broadcast();
@@ -390,6 +395,12 @@ class Room {
       this.resetPlayer(p);
     }
     this.syncBots(); // seats freed during the game go back to bots
+    for (const p of this.players.values()) {
+      Object.assign(p, this.lobbySpot());
+      p.budget = BUDGET_CAP;
+      this.toPlayer(p, 'correct', { x: p.x, y: p.y });
+    }
+    this.startLobbyTimer();
     this.broadcast();
   }
 
@@ -561,10 +572,57 @@ class Room {
     return [];
   }
 
+  // ---------------- lobby room ----------------
+
+  // A free spot near the wheel for someone arriving in the lobby.
+  lobbySpot() {
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random() * Math.PI * 2, r = 120 + Math.random() * 110;
+      const x = lobbyMap.spawn.x + Math.cos(a) * r, y = lobbyMap.spawn.y + Math.sin(a) * r * 0.75;
+      const res = lobbyPhysics.resolve(x, y);
+      if (Math.hypot(res.x - x, res.y - y) < 0.5) return { x, y };
+    }
+    return { x: lobbyMap.spawn.x, y: lobbyMap.spawn.y + lobbyMap.spawn.r };
+  }
+
+  handleLobbyMove(id, x, y) {
+    const p = this.players.get(id);
+    if (!p || !Number.isFinite(x) || !Number.isFinite(y)) return;
+    const now = Date.now();
+    p.budget = Math.min(BUDGET_CAP, p.budget + (BUDGET_RATE * (now - p.lastMoveAt)) / 1000);
+    p.lastMoveAt = now;
+    let dx = x - p.x, dy = y - p.y;
+    const d = Math.hypot(dx, dy);
+    if (d > p.budget) { dx *= p.budget / d; dy *= p.budget / d; }
+    const res = lobbyPhysics.sweep(p.x, p.y, p.x + dx, p.y + dy);
+    p.budget -= Math.hypot(res.x - p.x, res.y - p.y);
+    p.x = res.x;
+    p.y = res.y;
+    if (Math.hypot(res.x - x, res.y - y) > 4) this.toPlayer(p, 'correct', { x: res.x, y: res.y });
+  }
+
+  // While in the lobby: bots stroll around and everyone's position is shared.
+  startLobbyTimer() {
+    if (this.lobbyTimer) return;
+    this.lobbyTimer = setInterval(() => this.lobbyTick(), TICK_MS);
+    if (this.lobbyTimer.unref) this.lobbyTimer.unref();
+  }
+
+  lobbyTick() {
+    if (this.state !== 'lobby') return;
+    const now = Date.now();
+    for (const p of this.players.values()) {
+      if (p.isBot) bots.wanderLobby(p, TICK_MS / 1000, now, lobbyPhysics, lobbyMap);
+    }
+    const p = [...this.players.values()].map(pl => [pl.id, Math.round(pl.x), Math.round(pl.y), 0]);
+    this.io.to(this.code).emit('state', { p });
+  }
+
   // ---------------- movement ----------------
 
   // Client reports where it moved; the server checks speed and walls, and corrects if needed.
   handleMove(id, x, y) {
+    if (this.state === 'lobby') return this.handleLobbyMove(id, x, y);
     if (this.state !== 'playing') return;
     const p = this.players.get(id);
     if (!p || !Number.isFinite(x) || !Number.isFinite(y)) return;
@@ -972,6 +1030,8 @@ class Room {
 
   stopTimers() {
     for (const p of this.players.values()) if (!p.connected) clearTimeout(p.dropTimer);
+    clearInterval(this.lobbyTimer);
+    this.lobbyTimer = null;
     clearTimeout(this.countdownTimer);
     clearInterval(this.tickTimer);
     this.countdownTimer = null;

@@ -1,11 +1,12 @@
 // Player movement + collision. Shared by the server (validation) and the browser (prediction).
+// physics.create(otherMap) gives the same movement rules for another map (the lobby room).
 (function (factory) {
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = factory(require('./map'));
   } else {
     window.MR.Shared.physics = factory(window.MR.Shared.map);
   }
-})(function (map) {
+})(function factory(map) {
   const PLAYER_R = 26;
   const SPEED = 320; // world units per second
 
@@ -60,5 +61,5 @@
     return sweep(x, y, x + vx * s, y + vy * s, extra);
   }
 
-  return { PLAYER_R, SPEED, resolve, sweep, move };
+  return { PLAYER_R, SPEED, resolve, sweep, move, create: factory };
 });

@@ -1,6 +1,7 @@
 // Screens, networking, and the game loop.
 (() => {
   const physics = MR.Shared.physics;
+  const lobbyPhysics = physics.create(MR.Shared.lobbyMap); // walls of the lobby room
   const socket = io();
   const $ = sel => document.querySelector(sel);
 
@@ -40,6 +41,8 @@
     screen: 'home',
     room: null,
     myId: null,        // my player id (stays the same when I reconnect)
+    world: 'ship',     // 'lobby' (Captain's Quarters) or 'ship' (the race)
+    hudMode: null,
     me: { x: 0, y: 0, face: 1, walk: 0, moving: false },
     others: new Map(), // id -> { snaps: [{t,x,y}], face, walk, moving, x, y }
     lastSent: { x: 0, y: 0, t: 0 },
@@ -392,6 +395,42 @@
     socket.emit('startGame');
   });
 
+  // ---------- lobby pop-up over the walkable room ----------
+  const lobbyEl = $('#lobby');
+  const lobbyOpen = () => !lobbyEl.classList.contains('hidden');
+  function openLobby() {
+    renderLobby();
+    lobbyEl.classList.remove('hidden');
+    MR.Input.reset();
+  }
+  const closeLobby = () => lobbyEl.classList.add('hidden');
+  $('#crewBtn').addEventListener('click', openLobby);
+  $('#lobbyClose').addEventListener('click', closeLobby);
+  lobbyEl.addEventListener('click', e => { if (e.target === lobbyEl) closeLobby(); });
+
+  // Shows the right buttons for walking around the lobby vs racing.
+  function setHudMode(mode) {
+    if (S.hudMode === mode) return;
+    S.hudMode = mode;
+    const lobby = mode === 'lobby';
+    for (const id of ['#tasksBtn', '#mapBtn', '#playersBtn', '#useBtn', '#pickupBtn']) $(id).classList.toggle('hidden', lobby);
+    $('#crewBtn').classList.toggle('hidden', !lobby);
+    if (lobby) {
+      $('#taskList').classList.add('hidden');
+      $('#eventBanner').classList.add('hidden');
+      $('#lobbyBtn').classList.add('hidden');
+    } else {
+      lastUseKey = '';
+      lastPickupKey = '';
+    }
+  }
+
+  function updateCrewBtn() {
+    if (!S.room) return;
+    $('#crewBtnCode').textContent = S.room.code;
+    $('#crewBtnCount').textContent = `${S.room.players.length}/6`;
+  }
+
   $('#leaveBtn').addEventListener('click', leaveRoom);
 
   function shareLink() {
@@ -422,6 +461,7 @@
     S.room = null;
     S.myId = null;
     $('#reconnect').classList.add('hidden');
+    closeLobby();
     showScreen('home');
   }
 
@@ -484,6 +524,9 @@
   MR.Input.attach(canvas, goFullscreen);
 
   async function enterGame(room) {
+    S.world = 'ship';
+    closeLobby();
+    setHudMode('game');
     const me = room.players.find(p => p.id === S.myId);
     Object.assign(S.me, { x: me.x, y: me.y, face: 1, walk: 0, moving: false });
     S.lastSent = { x: me.x, y: me.y, t: 0 };
@@ -511,13 +554,44 @@
     }
   }
 
+  // Walking around the Captain's Quarters before (and between) races.
+  let lobbyHintShown = false;
+  async function enterLobby(room) {
+    S.world = 'lobby';
+    const me = room.players.find(p => p.id === S.myId);
+    Object.assign(S.me, { x: me.x, y: me.y, face: 1, walk: 0, moving: false });
+    S.lastSent = { x: me.x, y: me.y, t: 0 };
+    S.others.clear();
+    for (const p of room.players) if (p.id !== S.myId) S.others.set(p.id, newOther(p.x, p.y));
+    S.tasks = [];
+    S.barrels = [];
+    S.event = null;
+    S.blockers = [];
+    S.my = freshMy();
+    S.busy = false;
+    closeMinigame(false);
+    for (const id of ['#menu', '#playersPanel', '#results', '#picker', '#hatchPanel', '#mapPanel', '#countdown']) $(id).classList.add('hidden');
+    setHudMode('lobby');
+    updateCrewBtn();
+    showScreen('game');
+    if (!lobbyHintShown) {
+      lobbyHintShown = true;
+      toast(`Walk around the ship's quarters! Tap ⚓ ${room.code} to see the crew and set sail.`, 4000);
+    }
+    if (!MR.Render.isLobbyReady()) {
+      if (document.fonts) {
+        await Promise.race([document.fonts.load('30px "Pirata One"'), new Promise(r => setTimeout(r, 1500))]).catch(() => {});
+      }
+      MR.Render.buildLobby();
+    }
+  }
+
   function newOther(x, y) {
     return { snaps: [{ t: performance.now(), x, y }], x, y, face: 1, walk: 0, moving: false };
   }
 
   function updateHud() {
     const room = S.room;
-    $('#menuRoom').textContent = `· room ${room.code}`;
     $('#lobbyBtn').classList.toggle('hidden', room.hostId !== S.myId);
     // Red dot on 🏆 when a rival is one task from winning.
     const close = room.teams
@@ -1017,8 +1091,10 @@
     const inGame = room.state !== 'lobby';
     if (inGame && (!prev || prev.state === 'lobby')) enterGame(room);
     if (!inGame) {
-      closeMinigame(false);
-      showScreen('lobby');
+      if (!prev || prev.state !== 'lobby') enterLobby(room);
+      const ids = new Set(room.players.map(p => p.id));
+      for (const id of S.others.keys()) if (!ids.has(id)) S.others.delete(id);
+      updateCrewBtn();
       renderLobby();
       return;
     }
@@ -1281,7 +1357,8 @@
   // ---------- loop ----------
   function updateMe(dt, now) {
     const me = S.me;
-    if (!S.room || !socket.connected || S.room.state !== 'playing' || S.mg || S.my.inHatch || !$('#menu').classList.contains('hidden')) {
+    const canWalk = S.room && (S.room.state === 'playing' || (S.room.state === 'lobby' && !lobbyOpen()));
+    if (!canWalk || !socket.connected || S.mg || S.my.inHatch || !$('#menu').classList.contains('hidden')) {
       me.moving = false;
       return;
     }
@@ -1305,7 +1382,9 @@
       my += Math.sin(a) * PICKUPS.STORM_DRIFT;
     }
     if (mx || my) {
-      const res = physics.move(me.x, me.y, mx, my, dt, 1, S.blockers);
+      const res = S.world === 'lobby'
+        ? lobbyPhysics.move(me.x, me.y, mx, my, dt)
+        : physics.move(me.x, me.y, mx, my, dt, 1, S.blockers);
       me.moving = Math.hypot(res.x - me.x, res.y - me.y) > 0.3;
       me.x = res.x;
       me.y = res.y;
@@ -1391,6 +1470,15 @@
         if (info && !o.hidden) {
           players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status, hat: info.hat, eyes: info.eyes, parrot: info.parrot, team: info.team });
         }
+      }
+      if (S.room.state === 'lobby') {
+        MR.Render.draw(canvas, {
+          world: 'lobby', dpr, dt, me: S.me, players, time: now / 1000,
+          sway: MR.Settings.get('sway'),
+          showJoystick: !lobbyOpen(),
+        });
+        requestAnimationFrame(frame);
+        return;
       }
       const playing = S.room.state === 'playing';
       const open = S.tasks.filter(t => !t.done).map(t => {

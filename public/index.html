@@ -42,8 +42,8 @@
     </div>
   </section>
 
-  <!-- Lobby -->
-  <section id="lobby" class="screen">
+  <!-- Lobby controls: a pop-up over the walkable lobby room -->
+  <section id="lobby" class="lobby-overlay hidden">
     <div class="panel lobby-panel">
       <div class="lobby-head">
         <div>
@@ -53,6 +53,7 @@
         <div class="lobby-head-btns">
           <button class="btn btn-small settings-open" aria-label="Settings">⚙</button>
           <button id="shareBtn" class="btn btn-small">Share link</button>
+          <button id="lobbyClose" class="btn-icon dark" aria-label="Close and walk around">✕</button>
         </div>
       </div>
       <p id="shareMsg" class="hint"></p>
@@ -84,6 +85,7 @@
     <canvas id="canvas"></canvas>
     <div class="hud">
       <div class="hud-left">
+        <button id="crewBtn" class="hud-btn crew-btn hidden" aria-label="Open the lobby"><span class="crew-anchor">⚓</span> <span id="crewBtnCode"></span> · 👥 <span id="crewBtnCount"></span></button>
         <button id="tasksBtn" class="hud-btn" aria-expanded="false">📋 <span id="taskCount">0/6</span></button>
         <ul id="taskList" class="task-list"></ul>
       </div>
@@ -190,7 +192,7 @@
 
     <div id="menu" class="overlay hidden">
       <div class="panel menu-panel">
-        <h2>Menu <span id="menuRoom" class="muted"></span></h2>
+        <h2>Menu</h2>
         <button id="resumeBtn" class="btn btn-go">Resume</button>
         <button class="btn btn-small settings-open">⚙ Settings</button>
         <button id="lobbyBtn" class="btn btn-use">Back to lobby (everyone)</button>
@@ -297,6 +299,7 @@
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/shared/map.js"></script>
+  <script src="/shared/lobbyMap.js"></script>
   <script src="/shared/physics.js"></script>
   <script src="/shared/tasks.js"></script>
   <script src="/shared/pickups.js"></script>

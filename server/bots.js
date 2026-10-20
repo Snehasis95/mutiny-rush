@@ -154,6 +154,32 @@ function resetBrain(p) {
   p.brain = null;
 }
 
+// In the lobby room: stroll to a random spot, look around for a bit, repeat.
+function wanderLobby(p, dt, now, ph, room) {
+  const w = p.lobbyWalk || (p.lobbyWalk = { target: null, restUntil: now + rand(500, 2500), checkAt: 0, checkX: 0, checkY: 0 });
+  if (now < w.restUntil) return;
+  if (!w.target) {
+    const a = rand(0, Math.PI * 2), r = rand(110, 240);
+    w.target = { x: room.spawn.x + Math.cos(a) * r, y: room.spawn.y + Math.sin(a) * r * 0.7 };
+  }
+  const dx = w.target.x - p.x, dy = w.target.y - p.y, d = Math.hypot(dx, dy);
+  if (d < 12) {
+    w.target = null;
+    w.restUntil = now + rand(1500, 4500);
+    return;
+  }
+  const res = ph.move(p.x, p.y, dx / d, dy / d, dt, 0.45);
+  p.x = res.x;
+  p.y = res.y;
+  // Bumped into the wheel or furniture: pick somewhere else.
+  if (now >= w.checkAt) {
+    if (w.checkAt && Math.hypot(p.x - w.checkX, p.y - w.checkY) < 5) w.target = null;
+    w.checkAt = now + 1000;
+    w.checkX = p.x;
+    w.checkY = p.y;
+  }
+}
+
 // Forget the current route (e.g. tentacles just appeared or went away).
 function resetPath(p) {
   if (p.brain) p.brain.path = null;
@@ -292,4 +318,4 @@ function update(room, p, dt, now) {
   }
 }
 
-module.exports = { NAMES, LEVEL_IDS, update, resetBrain, resetPath, findPath, walkableCount: () => walkable.reduce((a, v) => a + v, 0) };
+module.exports = { NAMES, LEVEL_IDS, update, wanderLobby, resetBrain, resetPath, findPath, walkableCount: () => walkable.reduce((a, v) => a + v, 0) };

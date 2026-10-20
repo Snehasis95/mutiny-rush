@@ -4,6 +4,10 @@ MR.Render = (() => {
   const VIEW_H = 700; // world units visible vertically
   const PAD = { l: 260, t: 420, r: 260, b: 220 };
   let mapCanvas = null;
+  // The lobby room (Captain's Quarters)
+  const lobbyMap = MR.Shared.lobbyMap;
+  const LPAD = 40;
+  let lobbyCanvas = null;
 
   // ---------- helpers ----------
   function rng(seed) {
@@ -44,6 +48,153 @@ MR.Render = (() => {
   }
 
   // ---------- static map ----------
+  function buildLobby() {
+    const L = lobbyMap;
+    const c = document.createElement('canvas');
+    c.width = L.W + LPAD * 2;
+    c.height = L.H + LPAD * 2;
+    const g = c.getContext('2d');
+    g.translate(LPAD, LPAD);
+    // Floor
+    g.fillStyle = '#b98a55';
+    g.fillRect(0, 0, L.W, L.H);
+    const rand = rng(424242);
+    g.strokeStyle = 'rgba(50,28,10,.28)';
+    g.lineWidth = 2;
+    for (let y = 0; y < L.H; y += 32) {
+      g.beginPath(); g.moveTo(0, y); g.lineTo(L.W, y); g.stroke();
+      for (let x = rand() * 200; x < L.W; x += 180 + rand() * 120) {
+        g.beginPath(); g.moveTo(x, y); g.lineTo(x, y + 32); g.stroke();
+      }
+    }
+    // Rug, then furniture (the wheel is drawn live so it can turn)
+    for (const p of L.props) if (p.solid === false) drawProp(g, p);
+    // Walls with a lighter top edge
+    g.fillStyle = 'rgba(0,0,0,.25)';
+    for (const w of L.walls) g.fillRect(w.x + 4, w.y + 8, w.w, w.h);
+    for (const w of L.walls) {
+      g.fillStyle = '#5a3519';
+      g.fillRect(w.x, w.y, w.w, w.h);
+      g.fillStyle = '#7d4d27';
+      g.fillRect(w.x, w.y, w.w, Math.min(6, w.h));
+    }
+    // Windows in the top wall, looking out to sea
+    for (const wx of L.windows) {
+      const x = wx - 60, y = -14, ww = 120, hh = 44;
+      const grad = g.createLinearGradient(0, y, 0, y + hh);
+      grad.addColorStop(0, '#7ec8e3');
+      grad.addColorStop(1, '#1f6f8b');
+      g.fillStyle = grad;
+      g.fillRect(x, y, ww, hh);
+      g.strokeStyle = 'rgba(255,255,255,.7)';
+      g.lineWidth = 2;
+      for (const yy of [y + 28, y + 36]) {
+        g.beginPath();
+        for (let xx = x; xx <= x + ww; xx += 10) g.lineTo(xx, yy + Math.sin(xx * 0.3) * 2);
+        g.stroke();
+      }
+      g.strokeStyle = '#3d2210';
+      g.lineWidth = 6;
+      g.strokeRect(x, y, ww, hh);
+      g.lineWidth = 3;
+      g.beginPath(); g.moveTo(x + ww / 2, y); g.lineTo(x + ww / 2, y + hh); g.moveTo(x, y + hh / 2); g.lineTo(x + ww, y + hh / 2); g.stroke();
+    }
+    // Lanterns glowing on the side walls
+    for (const [lx, ly] of [[14, L.H * 0.35], [14, L.H * 0.7], [L.W - 14, L.H * 0.35], [L.W - 14, L.H * 0.7]]) {
+      const glow = g.createRadialGradient(lx, ly, 2, lx, ly, 70);
+      glow.addColorStop(0, 'rgba(255,210,120,.55)');
+      glow.addColorStop(1, 'rgba(255,210,120,0)');
+      g.fillStyle = glow;
+      g.beginPath(); g.arc(lx, ly, 70, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#3d2210';
+      g.fillRect(lx - 7, ly - 10, 14, 20);
+      g.fillStyle = '#ffd36b';
+      g.fillRect(lx - 4, ly - 6, 8, 12);
+    }
+    for (const p of L.props) if (p.solid !== false && p.type !== 'helm') drawProp(g, p);
+    // Room name on the floor
+    g.font = '30px "Pirata One", serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'top';
+    g.fillStyle = 'rgba(255,240,210,.55)';
+    g.fillText("Captain's Quarters", L.W / 2, L.H - 70);
+    lobbyCanvas = c;
+  }
+
+  // The big ship's wheel in the lobby, gently turning back and forth.
+  function drawHelm(g, cx, cy, size, t) {
+    const R = size / 2;
+    g.save();
+    g.fillStyle = 'rgba(0,0,0,.25)';
+    g.beginPath(); g.ellipse(cx + 6, cy + 12, R * 0.75, R * 0.55, 0, 0, Math.PI * 2); g.fill();
+    // Pedestal
+    g.fillStyle = '#4a2a12';
+    g.beginPath(); g.arc(cx, cy, R * 0.55, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#6b4423';
+    g.beginPath(); g.arc(cx, cy, R * 0.42, 0, Math.PI * 2); g.fill();
+    g.translate(cx, cy);
+    g.rotate(Math.sin(t * 0.45) * 0.7);
+    g.lineCap = 'round';
+    // Spokes with handles sticking out past the rim
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const ex = Math.cos(a) * R * 1.08, ey = Math.sin(a) * R * 1.08;
+      for (const [col, lw] of [['#3d2210', 11], ['#a0703f', 7]]) {
+        g.strokeStyle = col;
+        g.lineWidth = lw;
+        g.beginPath(); g.moveTo(0, 0); g.lineTo(ex, ey); g.stroke();
+      }
+      g.fillStyle = '#8b5a2b';
+      g.strokeStyle = '#3d2210';
+      g.lineWidth = 2.5;
+      g.beginPath(); g.arc(ex, ey, 8, 0, Math.PI * 2); g.fill(); g.stroke();
+    }
+    // Rim
+    g.strokeStyle = '#3d2210';
+    g.lineWidth = 16;
+    g.beginPath(); g.arc(0, 0, R * 0.78, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = '#a0703f';
+    g.lineWidth = 10;
+    g.beginPath(); g.arc(0, 0, R * 0.78, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = '#d4a017';
+    g.lineWidth = 2;
+    g.beginPath(); g.arc(0, 0, R * 0.78, 0, Math.PI * 2); g.stroke();
+    // Hub
+    g.fillStyle = '#d4a017';
+    g.beginPath(); g.arc(0, 0, R * 0.16, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#8a6a0c';
+    g.beginPath(); g.arc(0, 0, R * 0.07, 0, Math.PI * 2); g.fill();
+    g.restore();
+  }
+
+  // The lobby view: the whole room fits on screen, pirates walk around the wheel.
+  function drawLobby(canvas, s) {
+    const g = canvas.getContext('2d');
+    const dpr = s.dpr;
+    const cw = canvas.width / dpr, ch = canvas.height / dpr;
+    const L = lobbyMap;
+    const zoom = Math.max(0.35, Math.min(1.4, ch / (L.H + 70), cw / (L.W + 70)));
+    const sway = s.sway ? Math.sin(s.time * 0.55) * 0.008 : 0;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = '#14202e';
+    g.fillRect(0, 0, cw, ch);
+    g.translate(cw / 2, ch / 2 + 8);
+    g.rotate(sway);
+    g.scale(zoom, zoom);
+    g.translate(-L.W / 2, -L.H / 2);
+    if (lobbyCanvas) g.drawImage(lobbyCanvas, -LPAD, -LPAD);
+    const helm = L.props.find(p => p.type === 'helm');
+    // Pirates "behind" the wheel are drawn first, the rest on top of it
+    const list = s.players.slice().sort((a, b) => a.y - b.y);
+    const hy = helm.y + helm.h / 2;
+    for (const p of list) if (p.y < hy) drawPirate(g, p, s.time);
+    drawHelm(g, helm.x + helm.w / 2, hy, helm.w, s.time);
+    for (const p of list) if (p.y >= hy) drawPirate(g, p, s.time);
+    stepParticles(g, s.dt, true, ch);
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    if (s.showJoystick) drawJoystick(g, MR.Input.joy, MR.Input.RADIUS, MR.Input.isTouch, ch);
+  }
+
   function buildMap() {
     const c = document.createElement('canvas');
     c.width = map.W + PAD.l + PAD.r;
@@ -1029,6 +1180,7 @@ MR.Render = (() => {
   }
 
   function draw(canvas, s) {
+    if (s.world === 'lobby') return drawLobby(canvas, s);
     const g = canvas.getContext('2d');
     const dpr = s.dpr;
     const cw = canvas.width / dpr, ch = canvas.height / dpr;
@@ -1209,5 +1361,5 @@ MR.Render = (() => {
     return { s, ox, oy };
   }
 
-  return { buildMap, draw, drawMinimap, drawPirate, burst, puff, confetti, isReady: () => !!mapCanvas };
+  return { buildMap, buildLobby, draw, drawMinimap, drawPirate, burst, puff, confetti, isReady: () => !!mapCanvas, isLobbyReady: () => !!lobbyCanvas };
 })();
