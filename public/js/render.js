@@ -1399,5 +1399,10 @@ MR.Render = (() => {
     return { s, ox, oy };
   }
 
-  return { buildMap, buildLobby, draw, drawMinimap, drawPirate, burst, puff, confetti, isReady: () => !!mapCanvas, isLobbyReady: () => !!lobbyCanvas };
+  return {
+    buildMap, buildLobby, draw, drawMinimap, drawPirate, burst, puff, confetti,
+    // Single props, for the How to Play pictures
+    drawBarrel, drawKey, drawHatch, drawStation, drawOctopus, drawHelm,
+    isReady: () => !!mapCanvas, isLobbyReady: () => !!lobbyCanvas,
+  };
 })();

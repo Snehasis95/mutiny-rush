@@ -443,7 +443,13 @@ input:focus { border-color: var(--wood); }
 .hatch-panel { background: rgba(20, 12, 4, .97); }
 
 /* ---------- Settings + install (M4) ---------- */
-.home-extras { display: flex; gap: 10px; justify-content: center; margin-top: 12px; }
+.home-extras { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 12px; }
+.menu-row { display: flex; gap: 10px; justify-content: center; }
+.home-howto {
+  position: fixed; z-index: 2;
+  top: calc(12px + var(--safe-t)); right: calc(12px + var(--safe-r));
+  border: 2px solid #d4a017;
+}
 .lobby-head-btns { display: flex; gap: 8px; }
 .menu-panel .btn-small { justify-self: center; }
 
@@ -760,3 +766,65 @@ input:focus { border-color: var(--wood); }
 .chat-panel.typing .chat-list li { font-size: 13px; }
 .chat-panel.typing .chat-form input { padding: 6px 10px; }
 .chat-panel.typing .chat-send, .chat-panel.typing .btn-icon { padding: 6px 10px; height: 36px; }
+
+/* ---------- How to Play ---------- */
+.howto-overlay { z-index: 35; }
+.howto-panel {
+  max-width: 680px; padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 10px;
+  max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
+}
+.howto-panel .panel-head { margin: 0; }
+.howto-panel h2 { font-size: 24px; }
+.howto-body {
+  display: grid; grid-template-columns: minmax(0, 46%) minmax(0, 1fr); gap: 14px;
+  min-height: 0; flex: 1;
+}
+.howto-art {
+  width: 100%; aspect-ratio: 300 / 220; max-height: 46vh; align-self: center;
+  border-radius: 12px; border: 3px solid var(--parch-edge); background: #b07a45;
+}
+.howto-text { overflow-y: auto; min-height: 0; font-size: 16px; line-height: 1.35; color: var(--ink); }
+.howto-text p { margin: 0 0 8px; }
+.howto-icons { display: flex; flex-wrap: wrap; gap: 4px; font-size: 22px; }
+.howto-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.howto-list li { display: flex; gap: 8px; align-items: flex-start; }
+.howto-list li > span:first-child { font-size: 22px; line-height: 1.1; }
+.howto-items-btn { margin-top: 2px; }
+
+/* Full item list replaces the picture */
+.howto-overlay.items-view .howto-art { display: none; }
+.howto-overlay.items-view .howto-body { grid-template-columns: 1fr; }
+.howto-items { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.howto-items li {
+  display: flex; gap: 8px; align-items: center;
+  background: #fffaf0; border: 2px solid var(--parch-edge); border-radius: 10px; padding: 6px 8px;
+  font-size: 14px; line-height: 1.25;
+}
+.howto-items .hi-icon { font-size: 26px; flex: none; }
+.howto-items i { font-style: normal; font-size: 12px; color: var(--ink-soft); }
+
+.howto-nav { display: flex; align-items: center; gap: 10px; }
+.howto-nav #howtoNext { width: auto; margin-left: auto; padding: 10px 20px; font-size: 18px; }
+.howto-nav #howtoPrev { padding: 10px 16px; }
+.howto-dots { display: flex; gap: 6px; flex: 1; justify-content: center; }
+.howto-dot {
+  width: 12px; height: 12px; border-radius: 50%; padding: 0; cursor: pointer;
+  border: 2px solid var(--wood); background: transparent;
+}
+.howto-dot.on { background: var(--wood); }
+
+@media (max-height: 430px) {
+  .howto-overlay { padding: 8px; }
+  .howto-panel { padding: 10px 12px; gap: 8px; max-height: calc(100vh - 16px); max-height: calc(100dvh - 16px); }
+  .howto-panel h2 { font-size: 20px; }
+  .howto-panel .btn-icon { width: 38px; height: 38px; }
+  .howto-text { font-size: 14.5px; }
+  .howto-art { max-height: 56vh; }
+  .howto-nav #howtoNext { padding: 7px 16px; font-size: 16px; }
+  .howto-nav #howtoPrev { padding: 7px 12px; }
+}
+@media (max-width: 560px) and (orientation: portrait) {
+  .howto-body { grid-template-columns: 1fr; }
+  .howto-items { grid-template-columns: 1fr; }
+}
