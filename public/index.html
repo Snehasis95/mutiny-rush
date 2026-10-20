@@ -92,6 +92,7 @@
       <div class="hud-right">
         <button id="mapBtn" class="btn-icon" aria-label="Ship map">🗺️</button>
         <button id="playersBtn" class="btn-icon" aria-label="Players">🏆<span id="playersBadge" class="badge hidden"></span></button>
+        <button id="chatBtn" class="btn-icon" aria-label="Chat">💬<span id="chatBadge" class="badge chat-badge hidden"></span></button>
         <button id="menuBtn" class="btn-icon" aria-label="Menu">☰</button>
       </div>
     </div>
@@ -107,6 +108,16 @@
     </button>
 
     <div id="countdown" class="countdown hidden"></div>
+
+    <!-- Chat: typing box on top so the phone keyboard doesn't hide it -->
+    <div id="chatPanel" class="chat-panel hidden" role="dialog" aria-label="Chat">
+      <form id="chatForm" class="chat-form" autocomplete="off">
+        <input id="chatInput" maxlength="120" placeholder="Say something…" enterkeyhint="send" aria-label="Message">
+        <button type="submit" class="btn btn-go chat-send">Send</button>
+        <button type="button" id="chatClose" class="btn-icon dark" aria-label="Close chat">✕</button>
+      </form>
+      <ul id="chatList" class="chat-list" aria-live="polite"></ul>
+    </div>
 
     <!-- Ship event banner: big warning, then a small timer while it lasts -->
     <div id="eventBanner" class="event-banner hidden" role="status" aria-live="assertive">

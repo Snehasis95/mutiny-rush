@@ -618,6 +618,43 @@ MR.Render = (() => {
     g.restore();
   }
 
+  // Speech bubble above a pirate (bottom tip at x, y). Up to two lines.
+  function drawBubble(g, text, x, y) {
+    g.save();
+    g.font = '600 15px Fredoka, sans-serif';
+    const maxW = 190;
+    const words = text.split(' ');
+    const lines = [''];
+    for (const w of words) {
+      const test = lines[lines.length - 1] ? lines[lines.length - 1] + ' ' + w : w;
+      if (g.measureText(test).width <= maxW) lines[lines.length - 1] = test;
+      else if (lines.length < 2) lines.push(w);
+      else { lines[1] = lines[1].replace(/.{0,2}$/, '') + '…'; break; }
+    }
+    // Very long single words get cut to fit
+    for (let i = 0; i < lines.length; i++) {
+      while (g.measureText(lines[i]).width > maxW && lines[i].length > 2) lines[i] = lines[i].slice(0, -2) + '…';
+    }
+    const lh = 18;
+    const w = Math.max(...lines.map(l => g.measureText(l).width)) + 18;
+    const h = lines.length * lh + 10;
+    const bx = x - w / 2, by = y - h - 8;
+    g.fillStyle = 'rgba(255,255,255,.96)';
+    g.strokeStyle = '#3b2412';
+    g.lineWidth = 2.5;
+    roundRect(g, bx, by, w, h, 10);
+    g.fill(); g.stroke();
+    // Tail
+    g.beginPath(); g.moveTo(x - 7, by + h - 1); g.lineTo(x, y); g.lineTo(x + 7, by + h - 1); g.closePath();
+    g.fill();
+    g.beginPath(); g.moveTo(x - 7, by + h); g.lineTo(x, y); g.lineTo(x + 7, by + h); g.stroke();
+    g.fillStyle = '#3b2412';
+    g.textAlign = 'center';
+    g.textBaseline = 'top';
+    lines.forEach((l, i) => g.fillText(l, x, by + 5 + i * lh));
+    g.restore();
+  }
+
   function drawPirate(g, p, t) {
     if ((p.status || []).includes('offline')) {
       // Faded while their connection is down
@@ -769,6 +806,7 @@ MR.Render = (() => {
     g.strokeText(p.name, p.x, p.y - 52 + bob);
     g.fillStyle = p.isMe ? '#ffe28a' : '#fff';
     g.fillText(p.name, p.x, p.y - 52 + bob);
+    if (p.bubble) drawBubble(g, p.bubble, p.x, p.y - 74 + bob);
   }
 
   // Smuggler's Key lying on the deck: a spinning, glowing gold key.

@@ -115,6 +115,10 @@ io.on('connection', socket => {
   socket.on('setColor', color => active() && room.setColor(pid, color));
   socket.on('setLook', look => active() && room.setLook(pid, look));
   socket.on('setTeam', team => active() && room.setTeam(pid, team));
+  socket.on('chat', (text, ack) => {
+    const error = active() ? room.chat(pid, text) : 'Not in a room.';
+    if (typeof ack === 'function') ack({ ok: !error, error });
+  });
   socket.on('shuffleTeams', () => active() && room.shuffleTeams(pid));
   socket.on('setOption', data => data && active() && room.setOption(pid, data.key, data.value));
   socket.on('startGame', () => active() && room.start(pid));

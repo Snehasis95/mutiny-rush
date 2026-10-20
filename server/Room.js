@@ -54,6 +54,11 @@ const hatchById = new Map(map.hatches.map(h => [h.id, h]));
 const areaAt = (x, y) => map.areas.find(a => x >= a.x && x < a.x + a.w && y >= a.y && y < a.y + a.h);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const NETTED = "🥅 You're tangled in a net!";
+// Chat
+const CHAT_MAX_LEN = 120;
+const CHAT_HISTORY = 30;
+const CHAT_BURST = 5;          // at most this many messages...
+const CHAT_WINDOW_MS = 5000;   // ...in this many milliseconds
 const pick = list => list[Math.floor(Math.random() * list.length)];
 
 class Room {
@@ -85,6 +90,7 @@ class Room {
     this.blockers = [];     // temporary walls (Kraken tentacles)
     this.lobbyTimer = null;
     this.startLobbyTimer();
+    this.chatLog = []; // recent messages, sent to people who join or reconnect
   }
 
   humans() {
@@ -197,7 +203,10 @@ class Room {
     if (this.state === 'lobby') Object.assign(p, this.lobbySpot());
     this.players.set(id, p);
     if (!this.hostId && !isBot) this.hostId = id;
-    if (!isBot) this.broadcast();
+    if (!isBot) {
+      this.broadcast();
+      this.toPlayer(p, 'chatHistory', this.chatLog);
+    }
   }
 
   // Clears everything that belongs to a single match.
@@ -266,6 +275,7 @@ class Room {
     p.lastMoveAt = Date.now();
     p.budget = BUDGET_CAP;
     this.broadcast();
+    this.toPlayer(p, 'chatHistory', this.chatLog);
     if (this.state === 'lobby') return;
     this.sendTasks(p);
     this.sendMe(p);
@@ -570,6 +580,27 @@ class Room {
       if (seen.size === map.areas.length) return chosen;
     }
     return [];
+  }
+
+  // ---------------- chat ----------------
+
+  // Returns an error message, or null when the message was sent.
+  chat(id, text) {
+    const p = this.players.get(id);
+    if (!p || p.isBot) return 'Not in a room.';
+    if (typeof text !== 'string') return 'Nothing to send.';
+    // One line, no control characters, trimmed and capped.
+    const clean = text.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX_LEN);
+    if (!clean) return 'Nothing to send.';
+    const now = Date.now();
+    p.chatTimes = (p.chatTimes || []).filter(t => now - t < CHAT_WINDOW_MS);
+    if (p.chatTimes.length >= CHAT_BURST) return 'Slow down, matey! Wait a moment.';
+    p.chatTimes.push(now);
+    const msg = { id: p.id, name: p.name, color: p.color, team: p.team, text: clean, t: now };
+    this.chatLog.push(msg);
+    if (this.chatLog.length > CHAT_HISTORY) this.chatLog.shift();
+    this.io.to(this.code).emit('chat', msg);
+    return null;
   }
 
   // ---------------- lobby room ----------------

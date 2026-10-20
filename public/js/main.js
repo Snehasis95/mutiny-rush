@@ -56,6 +56,9 @@
     my: freshMy(),     // my pickup + effects; times are local performance.now() deadlines
     busy: false,
     event: null,       // current ship event: { id, phase, until, data }
+    chat: [],          // recent chat messages
+    bubbles: new Map(), // player id -> { text, until } speech bubble
+    unread: 0,
     blockers: [],      // Kraken tentacles currently blocking doorways
     stormSeed: Math.random() * 6.28, // starting wind direction for ⛈️ Storm
     lastInterruptAt: -1e9,       // waiting for the server to answer a USE / item tap
@@ -462,8 +465,107 @@
     S.myId = null;
     $('#reconnect').classList.add('hidden');
     closeLobby();
+    closeChat();
+    S.chat = [];
+    S.bubbles.clear();
+    setUnread(0);
     showScreen('home');
   }
+
+  // ---------- chat ----------
+  const chatPanel = $('#chatPanel');
+  const chatOpen = () => !chatPanel.classList.contains('hidden');
+  const BUBBLE_MS = 5000;
+
+  function renderChat() {
+    const items = S.chat.slice().reverse().map(m => {
+      const li = document.createElement('li');
+      if (m.id === S.myId) li.className = 'mine';
+      const who = document.createElement('span');
+      who.className = 'chat-who';
+      who.style.color = m.color;
+      who.textContent = m.id === S.myId ? 'You' : m.name;
+      const text = document.createElement('span');
+      text.className = 'chat-text';
+      text.textContent = m.text;
+      li.append(who, text);
+      return li;
+    });
+    if (!items.length) {
+      const li = document.createElement('li');
+      li.className = 'chat-empty';
+      li.textContent = 'No messages yet. Say ahoy!';
+      items.push(li);
+    }
+    $('#chatList').replaceChildren(...items);
+  }
+
+  function setUnread(n) {
+    S.unread = n;
+    $('#chatBadge').textContent = n > 9 ? '9+' : String(n);
+    $('#chatBadge').classList.toggle('hidden', !n);
+  }
+
+  function openChat() {
+    renderChat();
+    setUnread(0);
+    chatPanel.classList.remove('hidden');
+    // On phones, don't pop the keyboard up straight away: you can read first,
+    // then tap the box to type. On PC, jump straight into typing.
+    if (!MR.Input.isTouch) $('#chatInput').focus();
+  }
+  const closeChat = () => { chatPanel.classList.add('hidden'); $('#chatInput').blur(); };
+
+  $('#chatBtn').addEventListener('click', () => (chatOpen() ? closeChat() : openChat()));
+  $('#chatClose').addEventListener('click', closeChat);
+  $('#chatForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const input = $('#chatInput');
+    const text = input.value.trim();
+    if (!text) return;
+    socket.emit('chat', text, res => {
+      if (res && !res.ok) toast(res.error);
+    });
+    input.value = '';
+    // Close the phone keyboard after sending so the game is visible again.
+    if (MR.Input.isTouch) input.blur();
+  });
+
+  // While typing, the phone keyboard covers the bottom of the screen: squeeze the
+  // chat panel into the space that's still visible above it.
+  function fitChatToKeyboard() {
+    const vv = window.visualViewport;
+    const typing = document.activeElement === $('#chatInput');
+    chatPanel.classList.toggle('typing', typing && MR.Input.isTouch);
+    if (!vv || !typing || !MR.Input.isTouch) {
+      chatPanel.style.top = '';
+      chatPanel.style.maxHeight = '';
+      return;
+    }
+    chatPanel.style.top = `${vv.offsetTop + 4}px`;
+    chatPanel.style.maxHeight = `${Math.max(90, vv.height - 8)}px`;
+  }
+  $('#chatInput').addEventListener('focus', () => setTimeout(fitChatToKeyboard, 50));
+  $('#chatInput').addEventListener('blur', () => setTimeout(fitChatToKeyboard, 50));
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', fitChatToKeyboard);
+    window.visualViewport.addEventListener('scroll', fitChatToKeyboard);
+  }
+
+  socket.on('chat', m => {
+    S.chat.push(m);
+    if (S.chat.length > 30) S.chat.shift();
+    S.bubbles.set(m.id, { text: m.text, until: performance.now() + BUBBLE_MS });
+    if (chatOpen()) renderChat();
+    else if (m.id !== S.myId) {
+      setUnread(S.unread + 1);
+      MR.Sfx.click();
+    }
+  });
+  socket.on('chatHistory', list => {
+    S.chat = list.slice();
+    if (chatOpen()) renderChat();
+  });
 
   // ---------- settings ----------
   const settingsEl = $('#settings');
@@ -584,6 +686,13 @@
       }
       MR.Render.buildLobby();
     }
+  }
+
+  function bubbleFor(id, now) {
+    const b = S.bubbles.get(id);
+    if (!b) return null;
+    if (now > b.until) { S.bubbles.delete(id); return null; }
+    return b.text;
   }
 
   function newOther(x, y) {
@@ -1357,6 +1466,7 @@
   // ---------- loop ----------
   function updateMe(dt, now) {
     const me = S.me;
+    // You can keep walking with the chat open (typed letters never move you: see touch.js).
     const canWalk = S.room && (S.room.state === 'playing' || (S.room.state === 'lobby' && !lobbyOpen()));
     if (!canWalk || !socket.connected || S.mg || S.my.inHatch || !$('#menu').classList.contains('hidden')) {
       me.moving = false;
@@ -1463,12 +1573,12 @@
       const players = [];
       const meInfo = byId.get(S.myId);
       if (meInfo && !S.my.inHatch) {
-        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, hat: meInfo.hat, eyes: meInfo.eyes, parrot: meInfo.parrot, team: meInfo.team, isMe: true });
+        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, hat: meInfo.hat, eyes: meInfo.eyes, parrot: meInfo.parrot, team: meInfo.team, bubble: bubbleFor(S.myId, now), isMe: true });
       }
       for (const [id, o] of S.others) {
         const info = byId.get(id);
         if (info && !o.hidden) {
-          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status, hat: info.hat, eyes: info.eyes, parrot: info.parrot, team: info.team });
+          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status, hat: info.hat, eyes: info.eyes, parrot: info.parrot, team: info.team, bubble: bubbleFor(id, now) });
         }
       }
       if (S.room.state === 'lobby') {

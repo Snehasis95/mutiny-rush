@@ -85,6 +85,9 @@ test('bots play a whole race: walk, grab barrels, use items and win', () => {
     clearTimeout(room.countdownTimer);
     room.state = 'playing';
     room.nextEventAt = Infinity;
+    // A barrel right next to a bot, so grabbing is certain to come up in a short race.
+    const firstBot = [...room.players.values()].find(p => p.isBot);
+    room.barrels.push({ id: 999, x: firstBot.x + 50, y: firstBot.y, kind: 'barrel' });
     let grabbed = 0, used = 0;
     const grab = room.grabBarrel.bind(room), use = room.usePickup.bind(room);
     room.grabBarrel = (...a) => { const r = grab(...a); if (!r.error) grabbed++; return r; };

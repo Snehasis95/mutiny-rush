@@ -713,3 +713,30 @@ input:focus { border-color: var(--wood); }
 .crew-btn { font-size: 18px; padding: 9px 14px; background: rgba(107, 68, 35, .92); border-color: #d4a017; }
 .crew-btn .crew-anchor { color: #ffd23c; }
 @media (max-height: 430px) { .crew-btn { font-size: 16px; padding: 7px 12px; } }
+
+/* ---------- Chat ---------- */
+.chat-badge { width: auto; min-width: 18px; height: 18px; padding: 0 4px; font-size: 11px; font-weight: 700; color: #fff; line-height: 14px; text-align: center; }
+.chat-panel {
+  position: absolute; z-index: 8;
+  top: calc(64px + var(--safe-t)); right: calc(12px + var(--safe-r));
+  width: min(420px, calc(100% - 24px)); max-height: calc(100% - 80px - var(--safe-t));
+  display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  background: rgba(20, 32, 46, .92); border: 2px solid rgba(255, 255, 255, .2); border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .4);
+}
+.chat-panel.hidden { display: none; }
+.chat-form { display: flex; gap: 8px; align-items: center; }
+.chat-form input { flex: 1; min-width: 0; font-size: 16px; padding: 8px 12px; }
+.chat-send { width: auto; font-size: 15px; padding: 8px 12px; }
+.chat-form .btn-icon { width: 40px; height: 40px; flex: none; font-size: 18px; }
+.chat-list { list-style: none; margin: 0; padding: 0 2px; overflow-y: auto; display: grid; gap: 6px; }
+.chat-list li { color: #f3e2bf; font-size: 15px; line-height: 1.3; word-break: break-word; }
+.chat-list li.mine { color: #fff; }
+.chat-who { font-weight: 700; margin-right: 6px; text-shadow: 0 1px 0 rgba(0, 0, 0, .6); }
+.chat-empty { color: #9fb0c0; font-style: italic; }
+@media (max-height: 430px) { .chat-panel { top: calc(58px + var(--safe-t)); } .chat-list li { font-size: 14px; } }
+/* Typing on a phone: compact panel pinned to the top of the space above the keyboard */
+.chat-panel.typing { right: calc(8px + var(--safe-r)); left: calc(8px + var(--safe-l)); width: auto; padding: 6px 8px; gap: 4px; }
+.chat-panel.typing .chat-list li { font-size: 13px; }
+.chat-panel.typing .chat-form input { padding: 6px 10px; }
+.chat-panel.typing .chat-send, .chat-panel.typing .btn-icon { padding: 6px 10px; height: 36px; }
