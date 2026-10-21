@@ -95,6 +95,7 @@
         <button id="mapBtn" class="btn-icon" aria-label="Ship map">🗺️</button>
         <button id="playersBtn" class="btn-icon" aria-label="Players">🏆<span id="playersBadge" class="badge hidden"></span></button>
         <div id="codeChip" class="hud-chip code-chip hidden" aria-label="Room code"><b id="codeChipText"></b></div>
+        <button id="emoteBtn" class="btn-icon" aria-label="Emotes" aria-expanded="false">😀</button>
         <button id="chatBtn" class="btn-icon" aria-label="Chat">💬<span id="chatBadge" class="badge chat-badge hidden"></span></button>
         <button id="menuBtn" class="btn-icon" aria-label="Menu">☰</button>
       </div>
@@ -120,6 +121,9 @@
     <div id="coopBanner" class="coop-banner hidden" role="status" aria-live="polite"></div>
 
     <div id="countdown" class="countdown hidden"></div>
+
+    <!-- Emotes: tap one and your pirate does it -->
+    <div id="emotePanel" class="emote-panel hidden" role="menu" aria-label="Emotes"></div>
 
     <!-- Chat: typing box on top so the phone keyboard doesn't hide it -->
     <div id="chatPanel" class="chat-panel hidden" role="dialog" aria-label="Chat">
@@ -350,6 +354,7 @@
   <script src="/shared/pickups.js"></script>
   <script src="/shared/events.js"></script>
   <script src="/shared/looks.js"></script>
+  <script src="/shared/emotes.js"></script>
   <script src="js/settings.js"></script>
   <script src="js/audio.js"></script>
   <script src="js/touch.js"></script>

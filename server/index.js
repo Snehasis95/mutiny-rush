@@ -120,6 +120,10 @@ io.on('connection', socket => {
     if (typeof ack === 'function') ack({ ok: !error, error });
   });
   socket.on('shuffleTeams', () => active() && room.shuffleTeams(pid));
+  socket.on('emote', (e, ack) => {
+    const error = active() ? room.emote(pid, String(e)) : 'Not in a room.';
+    if (typeof ack === 'function') ack({ ok: !error, error });
+  });
   socket.on('kick', targetId => active() && room.kick(pid, String(targetId)));
   socket.on('moveTeam', data => data && active() && room.moveToTeam(pid, String(data.id), data.swapWith ? String(data.swapWith) : null));
   socket.on('setOption', data => data && active() && room.setOption(pid, data.key, data.value));

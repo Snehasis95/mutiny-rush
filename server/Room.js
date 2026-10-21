@@ -5,6 +5,7 @@ const pickupsDef = require('../shared/pickups');
 const { assign, pickTypes } = require('./taskAssign');
 const bots = require('./bots');
 const coop = require('./coop');
+const emotesDef = require('../shared/emotes');
 const eventsDef = require('../shared/events');
 const looks = require('../shared/looks');
 const lobbyMap = require('../shared/lobbyMap');
@@ -473,6 +474,10 @@ class Room {
     }
     this.tick(); // final positions
     this.broadcast();
+    // Bots celebrate or shake hands
+    for (const p of this.players.values()) {
+      if (p.isBot) this.botEmote(p, [p.parrot ? 'dance' : 'gg'], p.parrot ? 1 : 0.7);
+    }
   }
 
   tick() {
@@ -647,6 +652,27 @@ class Room {
     return null;
   }
 
+  // ---------------- emotes ----------------
+
+  // A pirate dances, waves... Everyone sees it. Returns an error or null.
+  emote(id, emoteId, now = Date.now()) {
+    const p = this.players.get(id);
+    if (!p) return 'Not in a room.';
+    if (!emotesDef.byId[emoteId]) return 'Unknown emote.';
+    if (p.activeTask) return 'Finish your task first!';
+    if (p.inHatch) return 'Not inside a hatch!';
+    if (now - (p.emoteAt || 0) < emotesDef.COOLDOWN_MS) return 'Easy there, matey!';
+    p.emoteAt = now;
+    this.io.to(this.code).emit('emote', { id, e: emoteId });
+    return null;
+  }
+
+  // Bots join in now and then: a dance in the lobby, "Arrr!" after a hit, GG at the end.
+  botEmote(p, choices, chance = 1) {
+    if (!p || !p.isBot || Math.random() > chance) return;
+    this.emote(p.id, pick(choices));
+  }
+
   // ---------------- lobby room ----------------
 
   // A free spot near the wheel for someone arriving in the lobby.
@@ -687,7 +713,17 @@ class Room {
     if (this.state !== 'lobby') return;
     const now = Date.now();
     for (const p of this.players.values()) {
-      if (p.isBot) bots.wanderLobby(p, TICK_MS / 1000, now, lobbyPhysics, lobbyMap);
+      if (!p.isBot) continue;
+      bots.wanderLobby(p, TICK_MS / 1000, now, lobbyPhysics, lobbyMap);
+      // Every so often a bot standing around shows off a move (and stays put until it's done).
+      const w = p.lobbyWalk;
+      if (w && !w.target && now < w.restUntil && now >= (p.nextEmoteAt || 0)) {
+        if (p.nextEmoteAt) {
+          this.botEmote(p, ['dance', 'wave', 'spin', 'laugh', 'arr']);
+          w.restUntil = Math.max(w.restUntil, now + 2600);
+        }
+        p.nextEmoteAt = now + 12000 + Math.random() * 20000;
+      }
     }
     const p = [...this.players.values()].map(pl => [pl.id, Math.round(pl.x), Math.round(pl.y), 0]);
     this.io.to(this.code).emit('state', { p });
@@ -915,6 +951,7 @@ class Room {
     this.sendMe(p);
     this.feed({ by: p.id, target: q.id, item: item.id, blocked });
     this.broadcast();
+    if (!blocked) this.botEmote(p, ['arr', 'laugh'], 0.6);
     return null;
   }
 

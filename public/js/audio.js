@@ -147,6 +147,20 @@ MR.Sfx = (() => {
     net: () => { hiss(0.3, 1200, 400, 0.14, 1); setTimeout(() => tone(130, 0.2, 'sine', 0.2, 70), 260); },
     // 🍺 Rum Bottle
     hiccup: () => { tone(300, 0.12, 'triangle', 0.15, 700); setTimeout(() => tone(320, 0.12, 'triangle', 0.12, 760), 380); },
+    // Emotes: a little sound for each
+    emote: id => {
+      const seq = {
+        dance: [[523, 0], [659, 120], [784, 240], [659, 360], [880, 480]],
+        wave: [[660, 0], [880, 110]],
+        laugh: [[700, 0], [620, 110], [700, 220], [620, 330]],
+        arr: [[220, 0], [196, 160]],
+        angry: [[180, 0], [150, 140]],
+        spin: [[400, 0], [600, 80], [800, 160], [1000, 240]],
+        gg: [[523, 0], [784, 150]],
+      }[id] || [];
+      const type = id === 'arr' || id === 'angry' ? 'sawtooth' : 'triangle';
+      seq.forEach(([f, d]) => setTimeout(() => tone(f, 0.14, type, 0.06), d));
+    },
     beep: last => tone(last ? 880 : 520, last ? 0.4 : 0.15, 'square', 0.08),
     fanfare: () => [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.3, 'triangle'), i * 140)),
   };

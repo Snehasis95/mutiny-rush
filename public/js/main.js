@@ -66,6 +66,7 @@
     dismissed: new Set(), // calls I closed with ✕ ("taskId:ping")
     heard: new Map(),  // taskId -> last ping I was buzzed for
     alertPending: false, // a call came in while I was busy in a mini-game
+    emotes: new Map(), // player id -> { e, at } emote playing right now
   };
 
   function freshMy() {
@@ -785,6 +786,57 @@
     S.alertPending = false;
     S.coopEarly = null;
     $('#coopBanner').classList.add('hidden');
+    S.emotes.clear();
+    closeEmotes();
+  }
+
+  // ---------- emotes (😀) ----------
+  const EMOTES = MR.Shared.emotes;
+  const emotePanel = $('#emotePanel');
+  const emoteOpen = () => !emotePanel.classList.contains('hidden');
+  emotePanel.replaceChildren(...EMOTES.list.map(e => {
+    const b = document.createElement('button');
+    b.className = 'emote-choice';
+    b.setAttribute('role', 'menuitem');
+    b.setAttribute('aria-label', e.name);
+    b.innerHTML = `<span class="emote-icon">${e.icon}</span><span class="emote-name">${e.name}</span>`;
+    b.addEventListener('click', ev => {
+      ev.stopPropagation();
+      closeEmotes();
+      socket.emit('emote', e.id, res => { if (!res.ok) toast(res.error, 1500); });
+    });
+    return b;
+  }));
+  function closeEmotes() {
+    emotePanel.classList.add('hidden');
+    $('#emoteBtn').setAttribute('aria-expanded', 'false');
+  }
+  $('#emoteBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    if (emoteOpen()) return closeEmotes();
+    if (S.mg) return;
+    emotePanel.classList.remove('hidden');
+    $('#emoteBtn').setAttribute('aria-expanded', 'true');
+  });
+  document.addEventListener('click', e => { if (emoteOpen() && !emotePanel.contains(e.target)) closeEmotes(); });
+
+  socket.on('emote', ({ id, e }) => {
+    const def = EMOTES.byId[e];
+    if (!def) return;
+    S.emotes.set(id, { e, at: performance.now(), ms: def.ms });
+    // Hear your own emotes, and anyone's close by
+    const o = id === S.myId ? S.me : S.others.get(id);
+    if (o && Math.hypot(o.x - S.me.x, o.y - S.me.y) < 500) MR.Sfx.emote(e);
+  });
+
+  // The emote this pirate is doing right now, as { id, k: seconds in } (or null).
+  function emoteFor(id, now, moving, isBot) {
+    const em = S.emotes.get(id);
+    if (!em) return null;
+    const k = (now - em.at) / 1000;
+    // Walking off ends it (bots keep their floating "ARRR!" while they run).
+    if (k * 1000 > em.ms || (moving && !isBot && k > 0.25)) { S.emotes.delete(id); return null; }
+    return { id: em.e, k };
   }
 
   function bubbleFor(id, now) {
@@ -818,7 +870,9 @@
     list.classList.toggle('hidden', !S.taskListOpen || !S.tasks.length);
     $('#tasksBtn').setAttribute('aria-expanded', String(S.taskListOpen));
     const now = performance.now();
-    list.replaceChildren(...S.tasks.map(t => {
+    // 🤝 Co-op tasks first: they need planning with a crewmate.
+    const ordered = S.tasks.filter(t => t.coop).concat(S.tasks.filter(t => !t.coop));
+    list.replaceChildren(...ordered.map(t => {
       const info = typeInfo.get(t.type);
       const li = document.createElement('li');
       if (t.done) li.className = 'done';
@@ -835,7 +889,7 @@
           : ` · 🤝 ${t.session.members.map(who).join(' & ')}`;
       } else if (isTeamGame() && t.busyBy && t.busyBy !== S.myId) where = ` · ⏳ ${nameById(t.busyBy)}`;
       area.textContent = where;
-      if (t.coop) li.classList.add('coop');
+      if (t.coop) li.classList.add('coop-task');
       li.append(`${t.done ? '✔' : info.icon} ${t.coop && !t.done ? '🤝 ' : ''}${info.name}`, area);
       return li;
     }));
@@ -1832,12 +1886,12 @@
       const players = [];
       const meInfo = byId.get(S.myId);
       if (meInfo && !S.my.inHatch) {
-        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, hat: meInfo.hat, eyes: meInfo.eyes, parrot: meInfo.parrot, team: meInfo.team, bubble: bubbleFor(S.myId, now), isMe: true });
+        players.push({ ...S.me, name: meInfo.name, color: meInfo.color, status: meInfo.status, hat: meInfo.hat, eyes: meInfo.eyes, parrot: meInfo.parrot, team: meInfo.team, bubble: bubbleFor(S.myId, now), emote: emoteFor(S.myId, now, S.me.moving, false), isMe: true });
       }
       for (const [id, o] of S.others) {
         const info = byId.get(id);
         if (info && !o.hidden) {
-          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status, hat: info.hat, eyes: info.eyes, parrot: info.parrot, team: info.team, bubble: bubbleFor(id, now) });
+          players.push({ x: o.x, y: o.y, face: o.face, walk: o.walk, moving: o.moving, name: info.name, color: info.color, status: info.status, hat: info.hat, eyes: info.eyes, parrot: info.parrot, team: info.team, bubble: bubbleFor(id, now), emote: emoteFor(id, now, o.moving, info.isBot) });
         }
       }
       if (S.room.state === 'lobby') {

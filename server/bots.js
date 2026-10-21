@@ -249,6 +249,14 @@ function goalStillValid(room, p, g, now) {
 // 🤝 A crewmate is calling and nobody has answered: say "On my way!" (after a moment) and head there.
 function answerCalls(room, p, b, lv, now) {
   if (!room.teamMode() || (b.goal && b.goal.kind === 'coop')) return;
+  // Already said "On my way!" but lost track (e.g. a failed try): head back there.
+  const mine = p.tasks.find(x => x.coop && !x.done && x.session && x.session.phase === 'waiting' && x.session.coming.includes(p.id));
+  if (mine) {
+    const spot = coop.helpSpot(mine);
+    b.goal = { kind: 'coop', id: mine.id, x: spot.x, y: spot.y };
+    b.path = null;
+    return;
+  }
   const t = p.tasks.find(x => x.coop && !x.done && x.session && x.session.phase === 'waiting'
     && x.session.callerId !== p.id && !x.session.coming.length && now >= x.lockedUntil);
   if (!t) { b.callSeen = null; return; }
@@ -359,6 +367,9 @@ function update(room, p, dt, now) {
       if (res.error) {
         b.goal = null;
         if (g.kind === 'task') b.coopSkipUntil = now + 3000;
+        // Couldn't join after all: free the call for someone else
+        else room.coopReply(p.id, g.id, 'cancel');
+        b.restUntil = now + 500;
       } else {
         b.coopWaitUntil = 0;
         b.coopActiveAt = 0;

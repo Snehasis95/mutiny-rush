@@ -95,11 +95,12 @@ function newSession(room, t, p, lock, now) {
 
 // USE on a co-op task: start a call, or join the crewmate who is waiting. Returns an error or null.
 function start(room, p, t, now) {
-  if (now < (p.coopCooldownUntil || 0)) return 'Wait a moment before calling again.';
   const lock = lockAt(t, p);
   if (lock < 0) return 'Get closer to the station.';
   const s = t.session;
   if (!s) {
+    // The cooldown only stops new calls; joining a crewmate is always fine.
+    if (now < (p.coopCooldownUntil || 0)) return 'Wait a moment before calling again.';
     t.session = newSession(room, t, p, lock, now);
     if (t.session.solo) t.session.phase = 'active'; // a crew of one does it alone
     p.activeTask = { taskId: t.id, type: t.type, startedAt: now, coop: true };

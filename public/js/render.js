@@ -655,6 +655,100 @@ MR.Render = (() => {
     g.restore();
   }
 
+  // Blend two #rrggbb colours (k = 0 -> a, 1 -> b).
+  function mixColor(a, b, k) {
+    const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+    const ch = s => Math.round(((pa >> s) & 255) * (1 - k) + ((pb >> s) & 255) * k);
+    return `#${((1 << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).slice(1)}`;
+  }
+
+  // Bits drawn around a pirate doing an emote: music notes, a waving hand, "ARRR!", steam…
+  // `body` is false while they walk (then only the floating bits show).
+  function drawEmoteFx(g, p, em, bob, body) {
+    const k = em.k, x = p.x, y = p.y + bob;
+    const text = (s, tx, ty, size, fill, alpha = 1) => {
+      g.save();
+      g.globalAlpha = alpha;
+      g.font = `700 ${size}px Fredoka, sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.lineWidth = 4;
+      g.strokeStyle = 'rgba(30,15,5,.85)';
+      g.strokeText(s, tx, ty);
+      g.fillStyle = fill;
+      g.fillText(s, tx, ty);
+      g.restore();
+    };
+    const emoji = (s, tx, ty, size, ang = 0, alpha = 1) => {
+      g.save();
+      g.globalAlpha = alpha;
+      g.translate(tx, ty);
+      g.rotate(ang);
+      g.font = `${size}px sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(s, 0, 0);
+      g.restore();
+    };
+    const pop = Math.min(1, k * 6); // things pop in quickly
+    const top = y - 84;             // above the name tag
+    switch (em.id) {
+      case 'dance':
+        for (let i = 0; i < 3; i++) {
+          const ph = (k * 0.9 + i / 3) % 1;
+          text(i % 2 ? '♫' : '♪', x + (i - 1) * 30 + Math.sin(ph * 6 + i) * 8, top + 10 - ph * 50, 30, ['#ffd23c', '#7fdcff', '#ff8ad8'][i], Math.min(1, (1 - ph) * 1.6));
+        }
+        break;
+      case 'wave':
+        if (body) emoji('👋', x + p.face * 36, y - 34, 34, Math.sin(k * 14) * 0.5);
+        break;
+      case 'laugh':
+        for (let i = 0; i < 2; i++) {
+          const ph = (k * 1.4 + i / 2) % 1;
+          text('HA', x + (i ? 32 : -32), top + 16 - ph * 40, 20 + ph * 8, '#fff', Math.min(1, (1 - ph) * 1.6));
+        }
+        emoji('😂', x, top - 4, 30 * pop);
+        break;
+      case 'arr': {
+        if (body) {
+          // Cutlass raised high
+          g.save();
+          g.translate(x + p.face * 26, y - 2);
+          g.rotate(p.face * (-0.6 + Math.sin(k * 10) * 0.25));
+          g.fillStyle = '#d4a017';
+          g.fillRect(-3, -2, 6, 12);       // grip
+          g.fillRect(-8, -4, 16, 4);       // guard
+          g.fillStyle = '#e8eef3';
+          g.strokeStyle = '#7d8a96';
+          g.lineWidth = 1.5;
+          g.beginPath(); g.moveTo(-3, -4); g.lineTo(-2, -38); g.quadraticCurveTo(4, -42, 4, -34); g.lineTo(3, -4); g.closePath(); g.fill(); g.stroke();
+          g.restore();
+        }
+        const s = 1 + (1 - pop) * 0.6;
+        text('ARRR!', x, top, 30 * s, '#ffd23c', Math.min(1, (1.8 - k) * 3));
+        break;
+      }
+      case 'angry':
+        emoji('💢', x + p.face * 26, y - 40, 30 + Math.sin(k * 12) * 4, 0, pop);
+        for (let i = 0; i < 3; i++) {
+          const ph = (k * 1.6 + i / 3) % 1;
+          g.fillStyle = `rgba(255,255,255,${0.8 * (1 - ph)})`;
+          g.beginPath(); g.arc(x + (i - 1) * 16, top + 14 - ph * 34, 7 + ph * 9, 0, Math.PI * 2); g.fill();
+        }
+        break;
+      case 'spin':
+        for (let i = 0; i < 6; i++) {
+          const a = k * 8 + (i / 6) * Math.PI * 2;
+          text('✦', x + Math.cos(a) * 42, y - 4 + Math.sin(a) * 16, 22, i % 2 ? '#ffd23c' : '#fff', Math.max(0, 1 - k / 1.4));
+        }
+        break;
+      case 'gg':
+        emoji('👍', x + p.face * 36, y - 24, 32, Math.sin(k * 5) * 0.15, pop);
+        text('GG', x, top, 30 * (1 + (1 - pop) * 0.5), '#7dff8e');
+        break;
+    }
+  }
+
   function drawPirate(g, p, t) {
     if ((p.status || []).includes('offline')) {
       // Faded while their connection is down
@@ -664,9 +758,49 @@ MR.Render = (() => {
       g.restore();
       return;
     }
-    const color = p.color || '#cccccc';
+    let color = p.color || '#cccccc';
     const bob = p.moving ? -Math.abs(Math.sin(p.walk)) * 5 : Math.sin(t * 2 + p.x) * 1;
-    const step = p.moving ? Math.sin(p.walk) * 6 : 0;
+    let step = p.moving ? Math.sin(p.walk) * 6 : 0;
+
+    // Emote: p.emote = { id, k: seconds since it started }. The body only dances while standing still.
+    const em = p.emote && !p.moving ? p.emote : null;
+    let ex = 0, ey = 0, rot = 0, sx = 1, sy = 1, face = p.face;
+    if (em) {
+      const k = em.k;
+      switch (em.id) {
+        case 'dance':
+          ey = -Math.abs(Math.sin(k * 9)) * 12;
+          ex = Math.sin(k * 4.5) * 8;
+          rot = Math.sin(k * 9) * 0.18;
+          step = Math.sin(k * 9) * 8;
+          face = Math.sin(k * 4.5) >= 0 ? 1 : -1;
+          break;
+        case 'wave':
+          rot = -0.12 * p.face;
+          break;
+        case 'laugh':
+          ex = Math.sin(k * 45) * 2.5;
+          sy = 1 + Math.sin(k * 22) * 0.07;
+          sx = 1 - Math.sin(k * 22) * 0.05;
+          break;
+        case 'arr':
+          ey = k < 0.5 ? -Math.sin((k / 0.5) * Math.PI) * 24 : 0;
+          sy = k < 0.5 ? 1 + Math.sin((k / 0.5) * Math.PI) * 0.08 : 1;
+          break;
+        case 'angry':
+          color = mixColor(color, '#e53935', Math.min(1, k * 2) * 0.6);
+          ey = -Math.abs(Math.sin(k * 14)) * 3;
+          step = Math.sin(k * 14) * 5;
+          break;
+        case 'spin':
+          sx = Math.cos(Math.min(1, k / 1.1) * Math.PI * 4); // two full turns
+          ey = -Math.sin(Math.min(1, k / 1.1) * Math.PI) * 10;
+          break;
+        case 'gg':
+          ey = -Math.abs(Math.sin(k * 5)) * 5;
+          break;
+      }
+    }
 
     // Shadow
     g.fillStyle = 'rgba(0,0,0,.25)';
@@ -686,24 +820,41 @@ MR.Render = (() => {
     }
 
     g.save();
-    g.translate(p.x, p.y);
-    g.scale(p.face, 1);
+    g.translate(p.x + ex, p.y);
+    g.scale(face, 1);
 
     // Feet
     g.fillStyle = shade(color, -0.45);
     g.beginPath(); g.ellipse(-10 + step, 24, 9, 6, 0, 0, Math.PI * 2); g.fill();
     g.beginPath(); g.ellipse(10 - step, 24, 9, 6, 0, 0, Math.PI * 2); g.fill();
 
-    g.translate(0, bob);
+    g.translate(0, bob + ey);
+    if (rot) g.rotate(rot);
+    if (sx !== 1 || sy !== 1) g.scale(Math.abs(sx) < 0.08 ? 0.08 : sx, sy);
 
-    // Body
+    // Body (glowing red when angry)
     roundRect(g, -22, -24, 44, 48, 20);
+    if (em && em.id === 'angry') {
+      g.save();
+      g.shadowColor = '#ff2a2a';
+      g.shadowBlur = 16 + Math.sin(em.k * 12) * 6;
+      g.fillStyle = color; g.fill();
+      g.restore();
+    }
     g.fillStyle = color; g.fill();
     g.lineWidth = 3; g.strokeStyle = shade(color, -0.5); g.stroke();
     g.fillStyle = 'rgba(255,255,255,.25)';
     g.beginPath(); g.ellipse(-8, 6, 6, 10, 0.3, 0, Math.PI * 2); g.fill();
 
     drawEyes(g, p.eyes || 'patch');
+    if (em && em.id === 'angry') {
+      // Cross eyebrows
+      g.strokeStyle = '#1a0d05';
+      g.lineWidth = 4;
+      g.lineCap = 'round';
+      g.beginPath(); g.moveTo(-15, -14); g.lineTo(-4, -9); g.stroke();
+      g.beginPath(); g.moveTo(15, -14); g.lineTo(4, -9); g.stroke();
+    }
     drawHat(g, p.hat || 'tricorn');
     if (p.parrot) drawParrot(g, t);
 
@@ -796,6 +947,8 @@ MR.Render = (() => {
       g.beginPath(); g.arc(p.x, p.y - 6 + bob, 46, 0, Math.PI * 2); g.fill(); g.stroke();
       g.restore();
     }
+
+    if (p.emote) drawEmoteFx(g, p, p.emote, bob + ey, !!em);
 
     // Name tag
     g.font = '600 16px Fredoka, sans-serif';
