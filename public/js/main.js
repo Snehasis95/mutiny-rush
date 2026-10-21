@@ -1862,8 +1862,10 @@
       const arrowTasks = open.filter(t => !t.busy)
         .sort((a, b) => Math.hypot(a.x - S.me.x, a.y - S.me.y) - Math.hypot(b.x - S.me.x, b.y - S.me.y))
         .slice(0, 6);
-      // 🤝 Crewmates' calls always get a green arrow (even with task arrows off).
-      const helpArrows = playing && !S.mg ? S.calls.filter(c => c.callerId !== S.myId).map(c => ({ x: c.x, y: c.y, icon: '🤝', help: true })) : [];
+      // 🤝 Crewmates' calls get a green arrow. With task arrows off, only once you've said "On my way!".
+      const helpArrows = playing && !S.mg ? S.calls
+        .filter(c => c.callerId !== S.myId && (S.room.options.taskArrows || c.coming.includes(S.myId)))
+        .map(c => ({ x: c.x, y: c.y, icon: '🤝', help: true })) : [];
       renderCoopBanner();
       MR.Render.draw(canvas, {
         dpr, dt, me: S.me, players, time: now / 1000,
